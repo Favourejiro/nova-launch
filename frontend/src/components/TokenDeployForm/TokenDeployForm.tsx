@@ -6,10 +6,12 @@ import { getDeploymentFeeBreakdown } from '../../utils/feeCalculation';
 import { useFactoryState } from '../../hooks/useFactoryState';
 import { formatXLM, truncateAddress } from '../../utils/formatting';
 import { BasicInfoStep, type BasicInfoData } from './BasicInfoStep';
+import { TemplateSelector } from './TemplateSelector';
 import { FeeDisplay } from './FeeDisplay';
 import { Button, ProgressBar, LoadingButton } from '../UI';
 import { analytics } from '../../services/analytics';
 import { Input } from '../UI/Input';
+import type { TokenTemplate } from '../../config/tokenTemplates';
 
 interface TokenDeployFormProps {
     wallet: WalletState;
@@ -17,15 +19,17 @@ interface TokenDeployFormProps {
     isConnectingWallet: boolean;
 }
 
-type FormStep = 'basic' | 'review';
+type FormStep = 'template' | 'basic' | 'review';
 
 export function TokenDeployForm({
     wallet,
     onConnectWallet,
     isConnectingWallet,
 }: TokenDeployFormProps) {
-    const [step, setStep] = useState<FormStep>('basic');
+    const [step, setStep] = useState<FormStep>('template');
     const [basicInfo, setBasicInfo] = useState<BasicInfoData | null>(null);
+    const [selectedTemplate, setSelectedTemplate] = useState<TokenTemplate | null>(null);
+    const [templateDefaults, setTemplateDefaults] = useState<Omit<BasicInfoData, 'adminWallet'> | null>(null);
     const [metadataDescription, setMetadataDescription] = useState('');
     const [metadataImage, setMetadataImage] = useState<File | null>(null);
     const [localError, setLocalError] = useState<string | null>(null);
@@ -107,8 +111,10 @@ export function TokenDeployForm({
     };
 
     const resetForm = () => {
-        setStep('basic');
+        setStep('template');
         setBasicInfo(null);
+        setSelectedTemplate(null);
+        setTemplateDefaults(null);
         setMetadataDescription('');
         setMetadataImage(null);
         setLocalError(null);
@@ -116,6 +122,24 @@ export function TokenDeployForm({
         reset();
         try {
             analytics.track('deploy_another_reset');
+        } catch {}
+    };
+
+    const handleTemplateSelect = (defaults: Omit<BasicInfoData, 'adminWallet'>, template: TokenTemplate) => {
+        setTemplateDefaults(defaults);
+        setSelectedTemplate(template);
+        setStep('basic');
+        try {
+            analytics.track('template_selected', { templateId: template.id });
+        } catch {}
+    };
+
+    const handleTemplateSkip = () => {
+        setTemplateDefaults(null);
+        setSelectedTemplate(null);
+        setStep('basic');
+        try {
+            analytics.track('template_skipped');
         } catch {}
     };
 
@@ -151,22 +175,57 @@ export function TokenDeployForm({
         );
     }
 
-    if (step === 'basic') {
+    if (step === 'template') {
         return (
             <div data-tutorial="token-form">
+                <TemplateSelector
+                    onSelect={handleTemplateSelect}
+                    onSkip={handleTemplateSkip}
+                    selectedId={selectedTemplate?.id}
+                />
+            </div>
+        );
+    }
+
+    if (step === 'basic') {
+        const defaults = templateDefaults
+            ? {
+                name: basicInfo?.name ?? templateDefaults.name,
+                symbol: basicInfo?.symbol ?? templateDefaults.symbol,
+                decimals: basicInfo?.decimals ?? templateDefaults.decimals,
+                initialSupply: basicInfo?.initialSupply ?? templateDefaults.initialSupply,
+                adminWallet: basicInfo?.adminWallet ?? wallet.address ?? '',
+              }
+            : wallet.address
+            ? {
+                name: basicInfo?.name || '',
+                symbol: basicInfo?.symbol || '',
+                decimals: basicInfo?.decimals ?? 7,
+                initialSupply: basicInfo?.initialSupply || '',
+                adminWallet: basicInfo?.adminWallet || wallet.address,
+              }
+            : basicInfo || undefined;
+
+        return (
+            <div data-tutorial="token-form">
+                {selectedTemplate && (
+                    <div className="mb-4 flex items-center justify-between rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm">
+                        <span className="text-blue-700">
+                            Template: <strong>{selectedTemplate.label}</strong>
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => setStep('template')}
+                            className="text-xs text-blue-500 hover:text-blue-700 underline focus:outline-none"
+                            aria-label="Change template"
+                        >
+                            Change
+                        </button>
+                    </div>
+                )}
                 <BasicInfoStep
                     onNext={handleBasicNext}
-                    initialData={
-                        wallet.address
-                            ? {
-                                name: basicInfo?.name || '',
-                                symbol: basicInfo?.symbol || '',
-                                decimals: basicInfo?.decimals ?? 7,
-                                initialSupply: basicInfo?.initialSupply || '',
-                                adminWallet: basicInfo?.adminWallet || wallet.address,
-                            }
-                            : basicInfo || undefined
-                    }
+                    initialData={defaults}
                 />
             </div>
         );
@@ -182,6 +241,11 @@ export function TokenDeployForm({
                         ? `${truncateAddress(wallet.address)} (${wallet.network})`
                         : 'Not connected'}
                 </p>
+                {selectedTemplate && (
+                    <p className="mt-1 text-xs text-blue-600">
+                        Based on: <strong>{selectedTemplate.label}</strong>
+                    </p>
+                )}
             </div>
 
             {isPaused && !pauseLoading && (
