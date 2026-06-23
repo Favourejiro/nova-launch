@@ -1,7 +1,14 @@
 import pinataSDK from "@pinata/sdk";
 import NodeCache from "node-cache";
+import { Counter } from "prom-client";
 import { CircuitBreaker } from "../circuitBreaker.js";
-import { verifyCIDContent, verifyMetadataCID } from "./cidVerification.js";
+import { register } from "../metrics/index.js";
+import {
+  verifyCIDContent,
+  verifyMetadataCID,
+  verifyRetrievedContent,
+  CIDMismatchError,
+} from "./cidVerification.js";
 import { pinataQueue, type PinataQueueMetrics } from "./pinataQueue.js";
 
 const cache = new NodeCache({ stdTTL: 3600 }); // 1 hour cache
@@ -14,6 +21,21 @@ const ipfsCircuitBreaker = new CircuitBreaker({
 
 const PINATA_BASE_URL = "https://api.pinata.cloud";
 const CREDENTIAL_VALIDATION_TIMEOUT_MS = 10000;
+
+// ---------------------------------------------------------------------------
+// Prometheus metric: metadata.cid_mismatch counter
+// ---------------------------------------------------------------------------
+
+export const metadataCidMismatchCounter = new Counter({
+  name: "metadata_cid_mismatch_total",
+  help: "Total number of CID integrity mismatches detected on metadata retrieval",
+  labelNames: ["cid"],
+  registers: [register],
+});
+
+// ---------------------------------------------------------------------------
+// Credentials management
+// ---------------------------------------------------------------------------
 
 interface PinataCredentials {
   apiKey: string;
@@ -110,22 +132,43 @@ export function getActivePinataCredentials(): PinataCredentials {
   return { ...activeCredentials };
 }
 
+// ---------------------------------------------------------------------------
+// Upload-time CID verification config
+// ---------------------------------------------------------------------------
+
 // Set IPFS_VERIFY_CID=true to enable content-address integrity checks after upload.
 const CID_VERIFY_ENABLED = process.env.IPFS_VERIFY_CID === "true";
 const CID_VERIFY_GATEWAY =
   process.env.IPFS_VERIFY_GATEWAY_URL ?? "https://gateway.pinata.cloud/ipfs";
 
+// ---------------------------------------------------------------------------
+// Re-pin from trusted gateway
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-pin a CID from the trusted public IPFS gateway via Pinata's pinByHash API.
+ *
+ * Called automatically when a CID mismatch is detected on retrieval.
+ */
+export async function rePinFromGateway(cid: string): Promise<void> {
+  const pinata = await getPinataClient();
+  await pinata.pinByHash(cid, {
+    pinataMetadata: { name: `repin-${cid}` },
+  });
+  console.info(`[pinata] Successfully re-pinned CID ${cid} from gateway`);
+}
+
+// ---------------------------------------------------------------------------
+// Upload operations
+// ---------------------------------------------------------------------------
+
 export async function uploadImageToIPFS(
   buffer: Buffer,
   filename: string
 ): Promise<string> {
-<<<<<<< feat/integration-pinata-queue
   return ipfsCircuitBreaker.execute(() =>
     pinataQueue.enqueue(async () => {
-      const pinata = new pinataSDK(
-        process.env.PINATA_API_KEY!,
-        process.env.PINATA_API_SECRET!
-      );
+      const pinata = await getPinataClient();
 
       const result = await pinata.pinFileToIPFS(buffer, {
         pinataMetadata: { name: filename },
@@ -145,10 +188,7 @@ export async function uploadImageToIPFS(
 export async function uploadMetadataToIPFS(metadata: any): Promise<string> {
   return ipfsCircuitBreaker.execute(() =>
     pinataQueue.enqueue(async () => {
-      const pinata = new pinataSDK(
-        process.env.PINATA_API_KEY!,
-        process.env.PINATA_API_SECRET!
-      );
+      const pinata = await getPinataClient();
 
       const result = await pinata.pinJSONToIPFS(metadata);
       const cid = result.IpfsHash;
@@ -163,63 +203,78 @@ export async function uploadMetadataToIPFS(metadata: any): Promise<string> {
       return cid;
     })
   );
-=======
-  return ipfsCircuitBreaker.execute(async () => {
-    const pinata = await getPinataClient();
-
-    const result = await pinata.pinFileToIPFS(buffer, {
-      pinataMetadata: { name: filename },
-    });
-
-    const cid = result.IpfsHash;
-
-    if (CID_VERIFY_ENABLED) {
-      await verifyCIDContent(buffer, cid, CID_VERIFY_GATEWAY);
-    }
-
-    return cid;
-  });
 }
 
-export async function uploadMetadataToIPFS(metadata: any): Promise<string> {
-  return ipfsCircuitBreaker.execute(async () => {
-    const pinata = await getPinataClient();
+// ---------------------------------------------------------------------------
+// Retrieval with integrity verification
+// ---------------------------------------------------------------------------
 
-    const result = await pinata.pinJSONToIPFS(metadata);
-    const cid = result.IpfsHash;
+// Set IPFS_VERIFY_RETRIEVAL=true to enable CID integrity checks on every fetch.
+const CID_VERIFY_RETRIEVAL_ENABLED =
+  process.env.IPFS_VERIFY_RETRIEVAL !== "false"; // on by default
 
-    if (CID_VERIFY_ENABLED) {
-      await verifyMetadataCID(metadata, cid, CID_VERIFY_GATEWAY);
-    }
-
-    // Cache the metadata
-    cache.set(cid, metadata);
-
-    return cid;
-  });
->>>>>>> main
-}
+/**
+ * Track CIDs currently undergoing re-pin so callers get 503 until complete.
+ */
+const rePinInProgress = new Set<string>();
 
 export async function getMetadataFromIPFS(cid: string): Promise<any> {
   // Check cache first
   const cached = cache.get(cid);
   if (cached) return cached;
 
+  // Reject immediately while a re-pin is in progress for this CID
+  if (rePinInProgress.has(cid)) {
+    throw new CIDMismatchError(
+      cid,
+      "Re-pin in progress — content unavailable until integrity is restored"
+    );
+  }
+
   // Fetch from IPFS with circuit breaker + queue throttle
   return ipfsCircuitBreaker.execute(() =>
     pinataQueue.enqueue(async () => {
       const response = await fetch(
-        `https://gateway.pinata.cloud/ipfs/${cid}`
+        `${CID_VERIFY_GATEWAY}/${cid}`
       );
       if (!response.ok) throw new Error("Metadata not found");
 
-      const metadata = await response.json();
+      const rawBuffer = Buffer.from(await response.arrayBuffer());
+
+      if (CID_VERIFY_RETRIEVAL_ENABLED) {
+        await verifyRetrievedContent(rawBuffer, cid, {
+          gatewayBaseUrl: CID_VERIFY_GATEWAY,
+          onMismatch: (cidVal, trustedHash, retrievedHash) => {
+            metadataCidMismatchCounter.inc({ cid: cidVal });
+            console.error(
+              `[pinata] metadata.cid_mismatch: cid=${cidVal} ` +
+                `trusted=${trustedHash} retrieved=${retrievedHash}`
+            );
+            rePinInProgress.add(cidVal);
+          },
+          rePinFromGateway: async (cidVal) => {
+            try {
+              await rePinFromGateway(cidVal);
+              // Evict in-memory cache so next request fetches fresh content
+              cache.del(cidVal);
+            } finally {
+              rePinInProgress.delete(cidVal);
+            }
+          },
+        });
+      }
+
+      const metadata = JSON.parse(rawBuffer.toString("utf8"));
       cache.set(cid, metadata);
 
       return metadata;
     })
   );
 }
+
+// ---------------------------------------------------------------------------
+// Observability helpers
+// ---------------------------------------------------------------------------
 
 /**
  * Get the current state of the IPFS circuit breaker (for monitoring/debugging).
@@ -244,3 +299,5 @@ export function resetIPFSCircuitBreaker(): void {
 export function getPinataQueueMetrics(): PinataQueueMetrics {
   return pinataQueue.getMetrics();
 }
+
+export { CIDMismatchError };
