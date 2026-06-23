@@ -605,3 +605,227 @@ describe("registerChannel duplicate guard", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Retry-exhaustion integration scenarios
+// ---------------------------------------------------------------------------
+
+describe("retry exhaustion: scenario 1 — both email and SMS succeed", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setEnv({
+      SENDGRID_API_KEY: "SG.fake-key",
+      TWILIO_ACCOUNT_SID: "ACfakeaccountsid",
+      TWILIO_AUTH_TOKEN: "fakeauthtoken",
+      TWILIO_PHONE_NUMBER: "+15550001234",
+      NODE_ENV: "test",
+      MAX_RETRIES: "3",
+    });
+    delete process.env.NOTIFICATION_EMAIL_API_URL;
+    delete process.env.NOTIFICATION_SMS_API_URL;
+  });
+  afterEach(restoreEnv);
+
+  it("delivers to both channels successfully and logs sent lifecycle event for each", async () => {
+    // First call (SendGrid) + second call (Twilio) both succeed on first attempt.
+    mockedPost
+      .mockResolvedValueOnce({ status: 202, data: {} })   // SendGrid
+      .mockResolvedValueOnce({ status: 201, data: { sid: "SMfake" } }); // Twilio
+
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const svc = makeService();
+
+    const results = await svc.send({
+      targets: [
+        { type: "EMAIL", destination: "alice@example.com" },
+        { type: "SMS", destination: "+15551112233" },
+      ],
+      payload: { message: "Both channels test", subject: "all-ok" },
+    });
+
+    expect(results).toHaveLength(2);
+    expect(results[0].success).toBe(true);
+    expect(results[0].provider).toBe("sendgrid");
+    expect(results[1].success).toBe(true);
+    expect(results[1].provider).toBe("twilio");
+
+    // Both providers should log a "delivered" lifecycle event.
+    const logs = info.mock.calls.map((c) => c.join(" "));
+    expect(logs.some((l) => l.includes("EMAIL") && l.includes("delivered"))).toBe(true);
+    expect(logs.some((l) => l.includes("SMS") && l.includes("delivered"))).toBe(true);
+
+    info.mockRestore();
+  });
+});
+
+describe("retry exhaustion: scenario 2 — email exhausts all retries, SMS still delivers (partial delivery)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setEnv({
+      SENDGRID_API_KEY: "SG.fake-key",
+      TWILIO_ACCOUNT_SID: "ACfakeaccountsid",
+      TWILIO_AUTH_TOKEN: "fakeauthtoken",
+      TWILIO_PHONE_NUMBER: "+15550001234",
+      NODE_ENV: "test",
+      MAX_RETRIES: "3",
+    });
+    delete process.env.NOTIFICATION_EMAIL_API_URL;
+    delete process.env.NOTIFICATION_SMS_API_URL;
+  });
+  afterEach(restoreEnv);
+
+  it("partial delivery: email fails all 3 retries, SMS succeeds — result records failure + success separately", async () => {
+    // All SendGrid attempts fail with 503; Twilio succeeds on the first try.
+    mockedPost
+      .mockResolvedValueOnce({ status: 503, data: {} })           // SendGrid attempt 1
+      .mockResolvedValueOnce({ status: 503, data: {} })           // SendGrid attempt 2
+      .mockResolvedValueOnce({ status: 503, data: {} })           // SendGrid attempt 3
+      .mockResolvedValueOnce({ status: 201, data: { sid: "SMok" } }); // Twilio
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const svc = makeService();
+
+    const results = await svc.send({
+      targets: [
+        { type: "EMAIL", destination: "fail@example.com" },
+        { type: "SMS", destination: "+15559876543" },
+      ],
+      payload: { message: "Partial delivery test" },
+    });
+
+    expect(results).toHaveLength(2);
+
+    // Email result — exhausted: provider, error, and failure reflected.
+    const emailResult = results.find((r) => r.channel === "EMAIL")!;
+    expect(emailResult.success).toBe(false);
+    expect(emailResult.provider).toBe("sendgrid");
+    expect(typeof emailResult.error).toBe("string");
+    expect(emailResult.error).not.toBeNull();
+    // Verify 3 attempts were made (MAX_RETRIES = 3 calls to SendGrid).
+    const sendGridCalls = mockedPost.mock.calls.filter((c) =>
+      String(c[0]).includes("sendgrid")
+    );
+    expect(sendGridCalls).toHaveLength(3);
+
+    // SMS result — delivered despite email failure.
+    const smsResult = results.find((r) => r.channel === "SMS")!;
+    expect(smsResult.success).toBe(true);
+    expect(smsResult.provider).toBe("twilio");
+
+    // Warn log must reference the failed channel for lifecycle visibility.
+    const warnLogs = warn.mock.calls.map((c) => c.join(" "));
+    expect(warnLogs.some((l) => l.includes("EMAIL"))).toBe(true);
+    warn.mockRestore();
+  });
+});
+
+describe("retry exhaustion: scenario 3 — Twilio 429 rate-limit triggers retry backoff", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setEnv({
+      TWILIO_ACCOUNT_SID: "ACfakeaccountsid",
+      TWILIO_AUTH_TOKEN: "fakeauthtoken",
+      TWILIO_PHONE_NUMBER: "+15550001234",
+      NODE_ENV: "test",
+      MAX_RETRIES: "3",
+    });
+    delete process.env.NOTIFICATION_SMS_API_URL;
+  });
+  afterEach(restoreEnv);
+
+  it("Twilio 429 is retried (not a non-retryable code) and succeeds on the second attempt", async () => {
+    // 429 is NOT in the nonRetryableStatuses list → the retry engine will attempt again.
+    mockedPost
+      .mockResolvedValueOnce({ status: 429, data: { message: "Too Many Requests" } }) // rate-limited
+      .mockResolvedValueOnce({ status: 201, data: { sid: "SMrecovered" } });            // success on retry
+
+    const svc = makeService();
+
+    const results = await svc.send({
+      targets: [{ type: "SMS", destination: "+15551230000" }],
+      payload: { message: "Rate limit test" },
+    });
+
+    expect(results[0].success).toBe(true);
+    expect(results[0].provider).toBe("twilio");
+    // Two HTTP calls: one rate-limited, one successful.
+    expect(mockedPost).toHaveBeenCalledTimes(2);
+  });
+
+  it("Twilio 429 repeated across all retries exhausts the backoff window and returns failure", async () => {
+    mockedPost
+      .mockResolvedValueOnce({ status: 429, data: {} })
+      .mockResolvedValueOnce({ status: 429, data: {} })
+      .mockResolvedValueOnce({ status: 429, data: {} });
+
+    const svc = makeService();
+
+    const results = await svc.send({
+      targets: [{ type: "SMS", destination: "+15551230001" }],
+      payload: { message: "All retries 429" },
+    });
+
+    expect(results[0].success).toBe(false);
+    expect(results[0].provider).toBe("twilio");
+    expect(results[0].error).toContain("429");
+    // All 3 MAX_RETRIES attempts were consumed.
+    expect(mockedPost).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("retry exhaustion: scenario 4 — total exhaustion across all channels (dead-letter simulation)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setEnv({
+      SENDGRID_API_KEY: "SG.fake-key",
+      TWILIO_ACCOUNT_SID: "ACfakeaccountsid",
+      TWILIO_AUTH_TOKEN: "fakeauthtoken",
+      TWILIO_PHONE_NUMBER: "+15550001234",
+      NODE_ENV: "test",
+      MAX_RETRIES: "3",
+    });
+    delete process.env.NOTIFICATION_EMAIL_API_URL;
+    delete process.env.NOTIFICATION_SMS_API_URL;
+  });
+  afterEach(restoreEnv);
+
+  it("all channels exhaust all retries: each failure result includes provider, error, and attempt evidence", async () => {
+    // 6 HTTP calls total: 3 SendGrid failures + 3 Twilio failures.
+    mockedPost.mockResolvedValue({ status: 500, data: { message: "Internal Server Error" } });
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const svc = makeService();
+
+    const results = await svc.send({
+      targets: [
+        { type: "EMAIL", destination: "dead@example.com" },
+        { type: "SMS", destination: "+15550000001" },
+      ],
+      payload: { message: "Total exhaustion test" },
+    });
+
+    // Both channels failed — dead-letter semantics verified via result fields.
+    expect(results).toHaveLength(2);
+    for (const r of results) {
+      // provider field is populated (identifies which provider failed)
+      expect(typeof r.provider).toBe("string");
+      expect(r.provider.length).toBeGreaterThan(0);
+      // error field is populated with failure reason
+      expect(typeof r.error).toBe("string");
+      expect(r.error).not.toBeNull();
+      expect(r.error!.length).toBeGreaterThan(0);
+      // success is false
+      expect(r.success).toBe(false);
+    }
+
+    // Each channel must have retried MAX_RETRIES times:
+    // 3 SendGrid + 3 Twilio = 6 total axios.post calls.
+    expect(mockedPost).toHaveBeenCalledTimes(6);
+
+    // Both failed channels must emit a warn lifecycle event (failed).
+    const warnLogs = warn.mock.calls.map((c) => c.join(" "));
+    expect(warnLogs.some((l) => l.includes("EMAIL") && l.includes("failed"))).toBe(true);
+    expect(warnLogs.some((l) => l.includes("SMS") && l.includes("failed"))).toBe(true);
+    warn.mockRestore();
+  });
+});
