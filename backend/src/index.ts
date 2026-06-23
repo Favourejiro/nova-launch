@@ -19,7 +19,7 @@ import vaultRoutes from "./routes/vaults";
 import versionRoutes from "./routes/version";
 import searchRoutes from "./routes/search";
 import exportRoutes from "./routes/export";
-import graphqlRouter from "./graphql";
+import graphqlRouter, { attachGraphqlSubscriptions } from "./graphql";
 import openApiRouter from "./lib/openapi/router";
 import { Database } from "./config/database";
 import { successResponse, errorResponse } from "./utils/response";
@@ -235,6 +235,9 @@ const server = app.listen(PORT, async () => {
 
   // Attach WebSocket server for live event streaming
   websocketService.attach(server);
+
+  // Attach GraphQL subscriptions (graphql-ws) on the /graphql WS path
+  attachGraphqlSubscriptions(server);
 
   // Start event listener only after server (and DB) are ready
   if (process.env.ENABLE_EVENT_LISTENER === "true") {

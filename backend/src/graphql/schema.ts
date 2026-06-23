@@ -10,6 +10,10 @@
  *  - Enum values mirror the Prisma enums so resolvers can pass them through directly.
  *  - Mutations are intentionally excluded – writes go through the existing REST
  *    endpoints which carry full validation / auth middleware.
+ *  - Subscriptions deliver real-time domain events over a graphql-ws WebSocket
+ *    transport, fed by the in-process eventBus. Every subscription is tenant
+ *    scoped: a subscriber only receives events for tokens / proposals / vaults
+ *    whose creator matches the tenant resolved from the connection JWT.
  */
 
 export const typeDefs = /* GraphQL */ `
@@ -157,11 +161,7 @@ export const typeDefs = /* GraphQL */ `
   type Query {
     # Token queries
     token(address: String!): Token
-    tokens(
-      creator: String
-      limit: Int
-      offset: Int
-    ): [Token!]!
+    tokens(creator: String, limit: Int, offset: Int): [Token!]!
 
     # Stream queries
     stream(streamId: Int!): Stream
@@ -194,5 +194,67 @@ export const typeDefs = /* GraphQL */ `
       limit: Int
       offset: Int
     ): [Campaign!]!
+  }
+
+  # ── Real-time event payloads ────────────────────────────────────────────────
+
+  type TokenDeployedEvent {
+    tokenAddress: String!
+    creatorAddress: String!
+    name: String!
+    symbol: String!
+    totalSupply: String!
+    txHash: String!
+    timestamp: DateTime!
+  }
+
+  type BurnExecutedEvent {
+    tokenAddress: String!
+    creatorAddress: String!
+    amount: String!
+    burnedBy: String!
+    isAdminBurn: Boolean!
+    txHash: String!
+    timestamp: DateTime!
+  }
+
+  type ProposalStatusChangedEvent {
+    proposalId: Int!
+    tokenAddress: String!
+    creatorAddress: String!
+    status: ProposalStatus!
+    previousStatus: ProposalStatus
+    txHash: String!
+    timestamp: DateTime!
+  }
+
+  type VaultMaturedEvent {
+    vaultId: Int!
+    recipientAddress: String!
+    creatorAddress: String!
+    amount: String!
+    txHash: String!
+    timestamp: DateTime!
+  }
+
+  # ── Root Subscription ───────────────────────────────────────────────────────
+  #
+  # All subscriptions are tenant scoped via the connection JWT. The optional
+  # arguments below narrow the stream further within the tenant's own data.
+
+  type Subscription {
+    # Emitted when a new token finishes deploying. Optionally filter to a
+    # specific creator address (must be within the subscriber's tenant).
+    tokenDeployed(creatorAddress: String): TokenDeployedEvent!
+
+    # Emitted when tokens are burned. Optionally filter to a token address.
+    burnExecuted(tokenAddress: String): BurnExecutedEvent!
+
+    # Emitted when a governance proposal transitions status. Optionally filter
+    # to the proposals of a specific token address.
+    proposalStatusChanged(tokenAddress: String): ProposalStatusChangedEvent!
+
+    # Emitted when a vesting vault matures. Optionally filter to a recipient.
+    vaultMatured(recipientAddress: String): VaultMaturedEvent!
   }
 `;

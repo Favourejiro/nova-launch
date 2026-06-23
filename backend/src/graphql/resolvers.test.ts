@@ -37,34 +37,77 @@ async function getPrisma() {
 // ---------------------------------------------------------------------------
 
 const makeToken = (o: Record<string, unknown> = {}) => ({
-  id: "tok-1", address: "CTOKEN123", creator: "GCREATOR",
-  name: "Test Token", symbol: "TST", decimals: 7,
-  totalSupply: BigInt("1000000000"), initialSupply: BigInt("1000000000"),
-  totalBurned: BigInt("0"), burnCount: 0, metadataUri: null,
-  createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"), ...o,
+  id: "tok-1",
+  address: "CTOKEN123",
+  creator: "GCREATOR",
+  name: "Test Token",
+  symbol: "TST",
+  decimals: 7,
+  totalSupply: BigInt("1000000000"),
+  initialSupply: BigInt("1000000000"),
+  totalBurned: BigInt("0"),
+  burnCount: 0,
+  metadataUri: null,
+  createdAt: new Date("2026-01-01"),
+  updatedAt: new Date("2026-01-01"),
+  ...o,
 });
 
 const makeStream = (o: Record<string, unknown> = {}) => ({
-  id: "str-1", streamId: 1, creator: "GCREATOR", recipient: "GRECIPIENT",
-  amount: BigInt("500000"), metadata: null, status: "CREATED", txHash: "hash1",
-  createdAt: new Date("2026-01-01"), claimedAt: null, cancelledAt: null, ...o,
+  id: "str-1",
+  streamId: 1,
+  creator: "GCREATOR",
+  recipient: "GRECIPIENT",
+  amount: BigInt("500000"),
+  metadata: null,
+  status: "CREATED",
+  txHash: "hash1",
+  createdAt: new Date("2026-01-01"),
+  claimedAt: null,
+  cancelledAt: null,
+  ...o,
 });
 
 const makeProposal = (o: Record<string, unknown> = {}) => ({
-  id: "prop-1", proposalId: 1, tokenId: "tok-1", proposer: "GPROPOSER",
-  title: "Test Proposal", description: "A test", proposalType: "CUSTOM",
-  status: "ACTIVE", startTime: new Date("2026-01-01"), endTime: new Date("2026-02-01"),
-  quorum: BigInt("100"), threshold: BigInt("51"), metadata: null, txHash: "hash2",
-  createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"), executedAt: null, ...o,
+  id: "prop-1",
+  proposalId: 1,
+  tokenId: "tok-1",
+  proposer: "GPROPOSER",
+  title: "Test Proposal",
+  description: "A test",
+  proposalType: "CUSTOM",
+  status: "ACTIVE",
+  startTime: new Date("2026-01-01"),
+  endTime: new Date("2026-02-01"),
+  quorum: BigInt("100"),
+  threshold: BigInt("51"),
+  metadata: null,
+  txHash: "hash2",
+  createdAt: new Date("2026-01-01"),
+  updatedAt: new Date("2026-01-01"),
+  executedAt: null,
+  ...o,
 });
 
 const makeCampaign = (o: Record<string, unknown> = {}) => ({
-  id: "camp-1", campaignId: 1, tokenId: "tok-1", creator: "GCREATOR",
-  type: "BUYBACK", status: "ACTIVE", targetAmount: BigInt("1000000"),
-  currentAmount: BigInt("0"), executionCount: 0, startTime: new Date("2026-01-01"),
-  endTime: null, metadata: null, txHash: "hash3",
-  createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"),
-  completedAt: null, cancelledAt: null, ...o,
+  id: "camp-1",
+  campaignId: 1,
+  tokenId: "tok-1",
+  creator: "GCREATOR",
+  type: "BUYBACK",
+  status: "ACTIVE",
+  targetAmount: BigInt("1000000"),
+  currentAmount: BigInt("0"),
+  executionCount: 0,
+  startTime: new Date("2026-01-01"),
+  endTime: null,
+  metadata: null,
+  txHash: "hash3",
+  createdAt: new Date("2026-01-01"),
+  updatedAt: new Date("2026-01-01"),
+  completedAt: null,
+  cancelledAt: null,
+  ...o,
 });
 
 // ---------------------------------------------------------------------------
@@ -76,16 +119,24 @@ describe("Query.token", () => {
     const p = await getPrisma();
     vi.mocked(p.token.findUnique).mockResolvedValue(makeToken() as any);
 
-    const result = await resolvers.Query.token(undefined, { address: "CTOKEN123" });
+    const result = await resolvers.Query.token(undefined, {
+      address: "CTOKEN123",
+    });
 
-    expect(result).toMatchObject({ address: "CTOKEN123", name: "Test Token", totalSupply: "1000000000" });
+    expect(result).toMatchObject({
+      address: "CTOKEN123",
+      name: "Test Token",
+      totalSupply: "1000000000",
+    });
   });
 
   it("returns null when token not found", async () => {
     const p = await getPrisma();
     vi.mocked(p.token.findUnique).mockResolvedValue(null);
 
-    const result = await resolvers.Query.token(undefined, { address: "UNKNOWN" });
+    const result = await resolvers.Query.token(undefined, {
+      address: "UNKNOWN",
+    });
     expect(result).toBeNull();
   });
 
@@ -95,7 +146,9 @@ describe("Query.token", () => {
       makeToken({ totalSupply: BigInt("9007199254740993") }) as any
     );
 
-    const result = await resolvers.Query.token(undefined, { address: "CTOKEN123" }) as any;
+    const result = (await resolvers.Query.token(undefined, {
+      address: "CTOKEN123",
+    })) as any;
     expect(result.totalSupply).toBe("9007199254740993");
   });
 });
@@ -167,8 +220,14 @@ describe("Query.stream", () => {
     const p = await getPrisma();
     vi.mocked(p.stream.findUnique).mockResolvedValue(makeStream() as any);
 
-    const result = await resolvers.Query.stream(undefined, { streamId: 1 }) as any;
-    expect(result).toMatchObject({ streamId: 1, status: "CREATED", amount: "500000" });
+    const result = (await resolvers.Query.stream(undefined, {
+      streamId: 1,
+    })) as any;
+    expect(result).toMatchObject({
+      streamId: 1,
+      status: "CREATED",
+      amount: "500000",
+    });
   });
 
   it("returns null when stream not found", async () => {
@@ -196,7 +255,9 @@ describe("Query.streams", () => {
     await resolvers.Query.streams(undefined, { status: "CLAIMED" });
 
     expect(p.stream.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ status: "CLAIMED" }) })
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "CLAIMED" }),
+      })
     );
   });
 
@@ -204,11 +265,17 @@ describe("Query.streams", () => {
     const p = await getPrisma();
     vi.mocked(p.stream.findMany).mockResolvedValue([]);
 
-    await resolvers.Query.streams(undefined, { creator: "GCREATOR", recipient: "GRECIPIENT" });
+    await resolvers.Query.streams(undefined, {
+      creator: "GCREATOR",
+      recipient: "GRECIPIENT",
+    });
 
     expect(p.stream.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ creator: "GCREATOR", recipient: "GRECIPIENT" }),
+        where: expect.objectContaining({
+          creator: "GCREATOR",
+          recipient: "GRECIPIENT",
+        }),
       })
     );
   });
@@ -223,15 +290,23 @@ describe("Query.proposal", () => {
     const p = await getPrisma();
     vi.mocked(p.proposal.findUnique).mockResolvedValue(makeProposal() as any);
 
-    const result = await resolvers.Query.proposal(undefined, { proposalId: 1 }) as any;
-    expect(result).toMatchObject({ proposalId: 1, title: "Test Proposal", quorum: "100" });
+    const result = (await resolvers.Query.proposal(undefined, {
+      proposalId: 1,
+    })) as any;
+    expect(result).toMatchObject({
+      proposalId: 1,
+      title: "Test Proposal",
+      quorum: "100",
+    });
   });
 
   it("returns null when proposal not found", async () => {
     const p = await getPrisma();
     vi.mocked(p.proposal.findUnique).mockResolvedValue(null);
 
-    const result = await resolvers.Query.proposal(undefined, { proposalId: 999 });
+    const result = await resolvers.Query.proposal(undefined, {
+      proposalId: 999,
+    });
     expect(result).toBeNull();
   });
 });
@@ -249,11 +324,17 @@ describe("Query.proposals", () => {
     const p = await getPrisma();
     vi.mocked(p.proposal.findMany).mockResolvedValue([]);
 
-    await resolvers.Query.proposals(undefined, { status: "ACTIVE", proposalType: "CUSTOM" });
+    await resolvers.Query.proposals(undefined, {
+      status: "ACTIVE",
+      proposalType: "CUSTOM",
+    });
 
     expect(p.proposal.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ status: "ACTIVE", proposalType: "CUSTOM" }),
+        where: expect.objectContaining({
+          status: "ACTIVE",
+          proposalType: "CUSTOM",
+        }),
       })
     );
   });
@@ -268,15 +349,23 @@ describe("Query.campaign", () => {
     const p = await getPrisma();
     vi.mocked(p.campaign.findUnique).mockResolvedValue(makeCampaign() as any);
 
-    const result = await resolvers.Query.campaign(undefined, { campaignId: 1 }) as any;
-    expect(result).toMatchObject({ campaignId: 1, type: "BUYBACK", targetAmount: "1000000" });
+    const result = (await resolvers.Query.campaign(undefined, {
+      campaignId: 1,
+    })) as any;
+    expect(result).toMatchObject({
+      campaignId: 1,
+      type: "BUYBACK",
+      targetAmount: "1000000",
+    });
   });
 
   it("returns null when campaign not found", async () => {
     const p = await getPrisma();
     vi.mocked(p.campaign.findUnique).mockResolvedValue(null);
 
-    const result = await resolvers.Query.campaign(undefined, { campaignId: 999 });
+    const result = await resolvers.Query.campaign(undefined, {
+      campaignId: 999,
+    });
     expect(result).toBeNull();
   });
 });
@@ -294,11 +383,17 @@ describe("Query.campaigns", () => {
     const p = await getPrisma();
     vi.mocked(p.campaign.findMany).mockResolvedValue([]);
 
-    await resolvers.Query.campaigns(undefined, { type: "AIRDROP", status: "COMPLETED" });
+    await resolvers.Query.campaigns(undefined, {
+      type: "AIRDROP",
+      status: "COMPLETED",
+    });
 
     expect(p.campaign.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ type: "AIRDROP", status: "COMPLETED" }),
+        where: expect.objectContaining({
+          type: "AIRDROP",
+          status: "COMPLETED",
+        }),
       })
     );
   });
@@ -312,12 +407,21 @@ describe("Token.burnRecords", () => {
   it("fetches burn records for a token", async () => {
     const p = await getPrisma();
     const burnRow = {
-      id: "br-1", tokenId: "tok-1", from: "GFROM", amount: BigInt("100"),
-      burnedBy: "GFROM", isAdminBurn: false, txHash: "bh1", timestamp: new Date(),
+      id: "br-1",
+      tokenId: "tok-1",
+      from: "GFROM",
+      amount: BigInt("100"),
+      burnedBy: "GFROM",
+      isAdminBurn: false,
+      txHash: "bh1",
+      timestamp: new Date(),
     };
     vi.mocked(p.burnRecord.findMany).mockResolvedValue([burnRow] as any);
 
-    const result = await resolvers.Token.burnRecords({ id: "tok-1" }, {}) as any[];
+    const result = (await resolvers.Token.burnRecords(
+      { id: "tok-1" },
+      {}
+    )) as any[];
     expect(result).toHaveLength(1);
     expect(result[0].amount).toBe("100");
   });
@@ -327,12 +431,21 @@ describe("Proposal.votes", () => {
   it("fetches votes for a proposal", async () => {
     const p = await getPrisma();
     const voteRow = {
-      id: "v-1", proposalId: "prop-1", voter: "GVOTER", support: true,
-      weight: BigInt("50"), reason: null, txHash: "vh1", timestamp: new Date(),
+      id: "v-1",
+      proposalId: "prop-1",
+      voter: "GVOTER",
+      support: true,
+      weight: BigInt("50"),
+      reason: null,
+      txHash: "vh1",
+      timestamp: new Date(),
     };
     vi.mocked(p.vote.findMany).mockResolvedValue([voteRow] as any);
 
-    const result = await resolvers.Proposal.votes({ id: "prop-1" }, {}) as any[];
+    const result = (await resolvers.Proposal.votes(
+      { id: "prop-1" },
+      {}
+    )) as any[];
     expect(result).toHaveLength(1);
     expect(result[0].weight).toBe("50");
   });
@@ -349,7 +462,9 @@ describe("bigintToString serialisation", () => {
       makeToken({ totalSupply: BigInt("18446744073709551615") }) as any
     );
 
-    const result = await resolvers.Query.token(undefined, { address: "CTOKEN123" }) as any;
+    const result = (await resolvers.Query.token(undefined, {
+      address: "CTOKEN123",
+    })) as any;
     expect(result.totalSupply).toBe("18446744073709551615");
   });
 });
@@ -367,13 +482,25 @@ describe("schema", () => {
     const s = buildSchema(typeDefs);
     const fields = Object.keys(s.getQueryType()?.getFields() ?? {});
     expect(fields).toEqual(
-      expect.arrayContaining(["token", "tokens", "stream", "streams", "proposal", "proposals", "campaign", "campaigns"])
+      expect.arrayContaining([
+        "token",
+        "tokens",
+        "stream",
+        "streams",
+        "proposal",
+        "proposals",
+        "campaign",
+        "campaigns",
+      ])
     );
   });
 
   it("rejects unknown fields via graphql execution", async () => {
     const s = buildSchema(typeDefs);
-    const result = await graphql({ schema: s, source: `{ tokens { nonExistentField } }` });
+    const result = await graphql({
+      schema: s,
+      source: `{ tokens { nonExistentField } }`,
+    });
     expect(result.errors).toBeDefined();
     expect(result.errors![0].message).toMatch(/nonExistentField/);
   });
@@ -388,7 +515,9 @@ describe("depth guard", () => {
     function maxDepth(node: any, d = 0): number {
       if (!node || typeof node !== "object") return d;
       if (node.selectionSet?.selections) {
-        return Math.max(...node.selectionSet.selections.map((s: any) => maxDepth(s, d + 1)));
+        return Math.max(
+          ...node.selectionSet.selections.map((s: any) => maxDepth(s, d + 1))
+        );
       }
       return d;
     }
@@ -403,26 +532,52 @@ describe("depth guard", () => {
     function maxDepth(node: any, d = 0): number {
       if (!node || typeof node !== "object") return d;
       if (node.selectionSet?.selections) {
-        return Math.max(...node.selectionSet.selections.map((s: any) => maxDepth(s, d + 1)));
+        return Math.max(
+          ...node.selectionSet.selections.map((s: any) => maxDepth(s, d + 1))
+        );
       }
       return d;
     }
 
     // Manually construct a deeply nested AST-like object (7 levels)
     const deepNode = {
-      selectionSet: { selections: [{
-        selectionSet: { selections: [{
-          selectionSet: { selections: [{
-            selectionSet: { selections: [{
-              selectionSet: { selections: [{
-                selectionSet: { selections: [{
-                  selectionSet: { selections: [{}] }
-                }] }
-              }] }
-            }] }
-          }] }
-        }] }
-      }] }
+      selectionSet: {
+        selections: [
+          {
+            selectionSet: {
+              selections: [
+                {
+                  selectionSet: {
+                    selections: [
+                      {
+                        selectionSet: {
+                          selections: [
+                            {
+                              selectionSet: {
+                                selections: [
+                                  {
+                                    selectionSet: {
+                                      selections: [
+                                        {
+                                          selectionSet: { selections: [{}] },
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
     };
 
     const depth = maxDepth(deepNode);
