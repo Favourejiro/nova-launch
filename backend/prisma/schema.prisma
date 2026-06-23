@@ -404,3 +404,17 @@ model IntegrationState {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+/// Tracks refresh token families for reuse-detection and session hijack prevention.
+model RefreshToken {
+  id        String   @id @default(uuid())
+  familyId  String
+  token     String   @unique
+  used      Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([familyId])
+  @@index([token])
+  @@index([expiresAt])
+}
