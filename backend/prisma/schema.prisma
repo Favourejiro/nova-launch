@@ -404,3 +404,17 @@ model IntegrationState {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+/// Stores compressed projection snapshots for event sourcing replay optimization.
+/// Allows replay to start from the latest snapshot version rather than event 1,
+/// reducing the number of events that must be re-applied on startup or rebuild.
+model ProjectionSnapshot {
+  id        String   @id
+  entityId  String
+  version   Int
+  state     Json
+  createdAt DateTime @default(now())
+
+  @@index([entityId])
+  @@index([entityId, version])
+}
