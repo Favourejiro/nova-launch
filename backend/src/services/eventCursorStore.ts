@@ -3,6 +3,13 @@ import { PrismaClient } from "@prisma/client";
 const CURSOR_KEY = "stellar_event_cursor";
 
 /**
+ * Key used to store the last processed ledger sequence for governance event catchup.
+ * Stored separately from the Stellar paging cursor so governance replay is independent
+ * of the general event stream position.
+ */
+export const GOVERNANCE_LEDGER_CURSOR_KEY = "governance_last_ledger";
+
+/**
  * Durable cursor store backed by Prisma IntegrationState.
  * 
  * **Issue #1156: Persist Stellar event subscription cursor for gap-free resume**
@@ -75,6 +82,33 @@ export class EventCursorStore {
       where: { key: CURSOR_KEY },
       create: { key: CURSOR_KEY, value: cursor },
       update: { value: cursor },
+    });
+  }
+
+  /**
+   * Load the last processed governance ledger sequence number.
+   * Returns null when no cursor has been persisted yet (first boot).
+   */
+  async loadGovernanceLedger(): Promise<number | null> {
+    const row = await this.prisma.integrationState.findUnique({
+      where: { key: GOVERNANCE_LEDGER_CURSOR_KEY },
+    });
+    if (!row) return null;
+    const parsed = parseInt(row.value, 10);
+    return isNaN(parsed) ? null : parsed;
+  }
+
+  /**
+   * Persist the last successfully processed governance ledger sequence.
+   * Must be called after each batch of governance events is fully processed
+   * to maintain at-least-once delivery guarantees.
+   */
+  async saveGovernanceLedger(ledger: number): Promise<void> {
+    const value = String(ledger);
+    await this.prisma.integrationState.upsert({
+      where: { key: GOVERNANCE_LEDGER_CURSOR_KEY },
+      create: { key: GOVERNANCE_LEDGER_CURSOR_KEY, value },
+      update: { value },
     });
   }
 }

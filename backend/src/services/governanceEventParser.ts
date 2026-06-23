@@ -1,4 +1,5 @@
 import { PrismaClient, ProposalStatus, ProposalType } from '@prisma/client';
+import axios from 'axios';
 import {
   ProposalCreatedEvent,
   VoteCastEvent,
@@ -7,6 +8,49 @@ import {
   ProposalStatusChangedEvent,
   GovernanceEvent,
 } from '../types/governance';
+import { GovernanceEventMapper } from './governanceEventMapper';
+import { EventCursorStore } from './eventCursorStore';
+
+/**
+ * Default bounded catchup window in ledgers.
+ * Prevents unbounded replay on first start or after very long downtime.
+ * Can be overridden via the GOVERNANCE_CATCHUP_WINDOW environment variable.
+ */
+export const DEFAULT_GOVERNANCE_CATCHUP_WINDOW = 10_000;
+
+/**
+ * Horizon transport abstraction used by catchupFromCursor.
+ * Matches the HorizonTransport interface in stellarEventListener.ts so the
+ * same mock can be reused in tests.
+ */
+export interface GovernanceCatchupTransport {
+  getEvents(url: string, params: Record<string, unknown>): Promise<{
+    data: { _embedded?: { records: RawStellarEvent[] } };
+  }>;
+}
+
+export interface RawStellarEvent {
+  type: string;
+  ledger: number;
+  ledger_close_time: string;
+  contract_id: string;
+  id: string;
+  paging_token: string;
+  topic: string[];
+  value: unknown;
+  in_successful_contract_call: boolean;
+  transaction_hash: string;
+}
+
+/**
+ * Default transport that delegates to axios — identical to DefaultHorizonTransport
+ * in stellarEventListener.ts.
+ */
+export class DefaultGovernanceCatchupTransport implements GovernanceCatchupTransport {
+  async getEvents(url: string, params: Record<string, unknown>) {
+    return axios.get(url, { params, timeout: 30_000 });
+  }
+}
 
 /**
  * Contract error details structure
@@ -54,7 +98,21 @@ const KNOWN_CONTRACT_ERRORS = new Set([
  * Preserves structured error details aligned with frontend error semantics.
  */
 export class GovernanceEventParser {
-  constructor(private prisma: PrismaClient) {}
+  private readonly mapper: GovernanceEventMapper;
+  private readonly cursorStore: EventCursorStore;
+  private readonly transport: GovernanceCatchupTransport;
+
+  constructor(
+    private prisma: PrismaClient,
+    opts?: {
+      transport?: GovernanceCatchupTransport;
+      cursorStore?: EventCursorStore;
+    },
+  ) {
+    this.mapper = new GovernanceEventMapper();
+    this.cursorStore = opts?.cursorStore ?? new EventCursorStore(prisma);
+    this.transport = opts?.transport ?? new DefaultGovernanceCatchupTransport();
+  }
 
   /**
    * Parse contract error from error response
@@ -320,6 +378,147 @@ export class GovernanceEventParser {
       console.error(`Error parsing proposal status changed event:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Replay missed governance events from the last stored ledger cursor up to
+   * `currentLedger`, then update the persisted cursor.
+   *
+   * Called once on service restart **before** live polling begins so that events
+   * emitted during downtime are not lost.
+   *
+   * @param horizonUrl  Base URL of the Stellar Horizon instance.
+   * @param contractId  Factory contract address to filter events by.
+   * @param currentLedger  The latest confirmed ledger sequence (from Horizon `/`).
+   *
+   * ## Bounded replay
+   * The window is capped at `GOVERNANCE_CATCHUP_WINDOW` ledgers (default 10,000)
+   * to prevent an unbounded replay on first boot or very long downtime.
+   * Set the `GOVERNANCE_CATCHUP_WINDOW` environment variable to override.
+   *
+   * ## Idempotency
+   * All downstream write operations (upsert proposal, upsert vote …) are
+   * idempotent, so replaying already-processed events is safe.
+   *
+   * @returns Number of events processed during catchup.
+   */
+  async catchupFromCursor(
+    horizonUrl: string,
+    contractId: string,
+    currentLedger: number,
+  ): Promise<number> {
+    const catchupWindow =
+      parseInt(process.env.GOVERNANCE_CATCHUP_WINDOW ?? '', 10) ||
+      DEFAULT_GOVERNANCE_CATCHUP_WINDOW;
+
+    const lastLedger = await this.cursorStore.loadGovernanceLedger();
+
+    if (lastLedger === null) {
+      // First boot — no stored cursor. Clamp to window from current ledger so
+      // we don't replay the entire chain history.
+      const fromLedger = Math.max(1, currentLedger - catchupWindow);
+      console.log(
+        `[GovernanceEventParser] First boot — catchup from ledger ${fromLedger} ` +
+        `to ${currentLedger} (window: ${catchupWindow})`,
+      );
+      return this._replayLedgerRange(horizonUrl, contractId, fromLedger, currentLedger);
+    }
+
+    if (lastLedger >= currentLedger) {
+      console.log(
+        `[GovernanceEventParser] Cursor (${lastLedger}) is current — no catchup needed`,
+      );
+      return 0;
+    }
+
+    // Bound the replay window to avoid replaying too many ledgers after a long outage.
+    const fromLedger = Math.max(lastLedger + 1, currentLedger - catchupWindow);
+    console.log(
+      `[GovernanceEventParser] Catchup from ledger ${fromLedger} to ${currentLedger} ` +
+      `(last=${lastLedger}, window=${catchupWindow})`,
+    );
+    return this._replayLedgerRange(horizonUrl, contractId, fromLedger, currentLedger);
+  }
+
+  /**
+   * Fetch and process all governance contract events in the inclusive ledger
+   * range [fromLedger, toLedger], paging through Horizon results as needed.
+   *
+   * The governance ledger cursor is saved after each page of events so that a
+   * crash mid-catchup resumes from the last safe checkpoint.
+   */
+  private async _replayLedgerRange(
+    horizonUrl: string,
+    contractId: string,
+    fromLedger: number,
+    toLedger: number,
+  ): Promise<number> {
+    const url = `${horizonUrl}/contracts/${contractId}/events`;
+    // Horizon paging cursors encode ledger+tx position as "<ledger * 4096 * 4096>-<n>".
+    // Using the start-of-ledger cursor lets us request "everything from this ledger onward".
+    let cursor: string | null = this._ledgerToCursor(fromLedger);
+    let totalProcessed = 0;
+
+    while (true) {
+      const params: Record<string, unknown> = {
+        limit: 200,
+        order: 'asc',
+      };
+      if (cursor) {
+        params.cursor = cursor;
+      }
+
+      const response = await this.transport.getEvents(url, params);
+      const events: RawStellarEvent[] = response.data._embedded?.records ?? [];
+
+      if (events.length === 0) break;
+
+      // Stop once we have passed the target ledger.
+      const eventsInWindow = events.filter((e) => e.ledger <= toLedger);
+
+      for (const raw of eventsInWindow) {
+        const mapped = this.mapper.mapEvent(raw as any);
+        if (mapped) {
+          await this.parseEvent(mapped);
+          totalProcessed++;
+        }
+      }
+
+      if (eventsInWindow.length > 0) {
+        const maxLedger = Math.max(...eventsInWindow.map((e) => e.ledger));
+        await this.cursorStore.saveGovernanceLedger(maxLedger);
+      }
+
+      // If we received fewer events than the page size, or the last event is
+      // already past our target window, we are done.
+      if (events.length < 200 || events[events.length - 1].ledger > toLedger) {
+        break;
+      }
+
+      cursor = events[events.length - 1].paging_token;
+    }
+
+    // Always advance the cursor to the current ledger so that the next restart
+    // knows where to start from even if no events existed in the window.
+    await this.cursorStore.saveGovernanceLedger(toLedger);
+    console.log(
+      `[GovernanceEventParser] Catchup complete — processed ${totalProcessed} events up to ledger ${toLedger}`,
+    );
+    return totalProcessed;
+  }
+
+  /**
+   * Convert a ledger sequence number to the paging cursor for the first event
+   * on that ledger.  Horizon encodes position as:
+   *   cursor = (ledger * 4096 * 4096 * 256) + toid_offset
+   * We use offset 0 to start at the very beginning of the ledger.
+   * The resulting cursor is sent as the `cursor` query parameter.
+   */
+  private _ledgerToCursor(ledger: number): string {
+    // Horizon's cursor for the start of a ledger: ledger * 4096^2 * 256 - 1
+    // Using ledger-1 start cursor (Horizon returns events AFTER this cursor)
+    const toid = BigInt(ledger - 1) * BigInt(4096) * BigInt(4096) * BigInt(256);
+    return toid.toString();
   }
 
   /**
