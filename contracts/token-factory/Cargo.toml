@@ -16,6 +16,10 @@ soroban-sdk = { version = "26.0.1", features = ["hazmat-address"] }
 soroban-sdk = { version = "26.0.1", features = ["testutils", "hazmat-address"] }
 proptest = "1.4"
 
+[[test]]
+name = "contract_replay_regression_test"
+path = "tests/contract_replay_regression_test.rs"
+
 [features]
 legacy-tests = []
 
