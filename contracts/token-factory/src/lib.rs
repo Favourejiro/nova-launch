@@ -17,6 +17,7 @@ mod referral;
 
 mod batch_operations;
 mod burn;
+mod clawback;
 mod campaign;
 #[cfg(feature = "legacy-tests")]
 mod burn_auction;
@@ -1628,6 +1629,83 @@ impl TokenFactory {
             metadata_uri,
             fee_payment,
         )
+    }
+
+    /// Deploy a token with opt-in clawback enabled (Pro tier).
+    ///
+    /// Identical to `create_token` except the `clawback_enabled` flag is set
+    /// at creation time and **cannot be changed afterwards** (immutability
+    /// invariant). Use this variant for regulated tokens (stablecoins,
+    /// tokenized securities, grant disbursements).
+    ///
+    /// # Arguments
+    /// * `creator`          - Address deploying the token (must authorize)
+    /// * `name`             - Token name
+    /// * `symbol`           - Token symbol
+    /// * `decimals`         - Decimal places
+    /// * `initial_supply`   - Initial supply minted to `creator`
+    /// * `metadata_uri`     - Optional IPFS URI
+    /// * `fee_payment`      - Fee (>= base_fee + optional metadata_fee)
+    /// * `clawback_enabled` - `true` to enable admin clawback; immutable after creation
+    ///
+    /// # Errors
+    /// Same as `create_token`.
+    pub fn create_token_with_clawback(
+        env: Env,
+        creator: Address,
+        name: String,
+        symbol: String,
+        decimals: u32,
+        initial_supply: i128,
+        metadata_uri: Option<String>,
+        fee_payment: i128,
+        clawback_enabled: bool,
+    ) -> Result<Address, Error> {
+        token_creation::create_token_with_options(
+            &env,
+            creator,
+            name,
+            symbol,
+            decimals,
+            initial_supply,
+            metadata_uri,
+            fee_payment,
+            clawback_enabled,
+        )
+    }
+
+    /// Reclaim tokens from any holder (Pro-tier, admin only).
+    ///
+    /// The token **must** have been deployed with `clawback_enabled = true`.
+    /// This flag is immutable and cannot be toggled after creation.
+    ///
+    /// Clawback succeeds even when the target address is frozen; freezing
+    /// restricts voluntary transfers but does not block admin reclamation.
+    ///
+    /// # Arguments
+    /// * `admin`       - Current factory admin (must authorize)
+    /// * `token_index` - Registry index of the target token
+    /// * `from`        - Holder whose balance is reduced
+    /// * `amount`      - Amount to claw back (> 0)
+    ///
+    /// # Errors
+    /// * `Error::ContractPaused`      - Factory is paused
+    /// * `Error::Unauthorized`        - Caller is not the current admin
+    /// * `Error::TokenNotFound`       - `token_index` does not exist
+    /// * `Error::ClawbackDisabled`    - Token was created without clawback enabled
+    /// * `Error::InvalidAmount`       - `amount` ≤ 0
+    /// * `Error::InsufficientBalance` - `from` holds fewer tokens than `amount`
+    ///
+    /// # Events
+    /// Emits `clwbk_v1` with `admin`, `from`, `amount`, and `timestamp`.
+    pub fn clawback(
+        env: Env,
+        admin: Address,
+        token_index: u32,
+        from: Address,
+        amount: i128,
+    ) -> Result<(), Error> {
+        clawback::clawback(&env, admin, token_index, from, amount)
     }
 
     /// Pause a specific token (admin only)
@@ -4060,3 +4138,6 @@ mod bridge_test;
 
 #[cfg(all(test, feature = "legacy-tests"))]
 mod amm_test;
+
+#[cfg(test)]
+mod clawback_test;

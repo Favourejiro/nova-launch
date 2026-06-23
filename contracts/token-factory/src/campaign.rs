@@ -379,14 +379,6 @@ mod tests {
             assert_eq!(result, Err(Error::Unauthorized));
         });
     }
-                created_at: env.ledger().timestamp(),
-            };
-            storage::set_campaign(env, 1, &campaign);
-
-            let result = pause_campaign(env, &attacker, 1);
-            assert_eq!(result, Err(Error::Unauthorized));
-        });
-    }
 
     #[test]
     fn test_state_transition_validation() {

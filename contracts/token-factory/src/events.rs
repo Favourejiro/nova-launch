@@ -1459,3 +1459,33 @@ pub fn emit_dividend_reclaimed(
         (admin, reclaimed_amount),
     );
 }
+
+/// Emit clawback event (v1)
+///
+/// **Schema Version**: 1
+/// **Event Name**: clwbk_v1
+///
+/// **Topics** (indexed):
+/// - Event name: "clwbk_v1"
+/// - token_address: Address - The token contract address
+///
+/// **Payload** (non-indexed):
+/// - admin: Address  - The admin who performed the clawback
+/// - from: Address   - The holder whose tokens were reclaimed
+/// - amount: i128    - The number of tokens clawed back
+/// - timestamp: u64  - Ledger timestamp of the operation
+///
+/// **Schema Stability**: This schema is immutable. Any changes require a new version.
+pub fn emit_clawback(
+    env: &Env,
+    token_address: &Address,
+    admin: &Address,
+    from: &Address,
+    amount: i128,
+    timestamp: u64,
+) {
+    env.events().publish(
+        (symbol_short!("clwbk_v1"), token_address.clone()),
+        (admin.clone(), from.clone(), amount, timestamp),
+    );
+}

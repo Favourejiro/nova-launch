@@ -83,7 +83,7 @@ pub fn create_token_internal(
         total_burned: 0,
         burn_count: 0,
         is_paused: false,
-        clawback_enabled: false,
+        clawback_enabled: params.clawback_enabled,
         freeze_enabled: false,
     };
 
@@ -122,6 +122,21 @@ pub fn create_token(
     metadata_uri: Option<String>,
     fee_payment: i128,
 ) -> Result<Address, Error> {
+    create_token_with_options(env, creator, name, symbol, decimals, initial_supply, metadata_uri, fee_payment, false)
+}
+
+/// Create a single token with fee payment and optional clawback
+pub fn create_token_with_options(
+    env: &Env,
+    creator: Address,
+    name: String,
+    symbol: String,
+    decimals: u32,
+    initial_supply: i128,
+    metadata_uri: Option<String>,
+    fee_payment: i128,
+    clawback_enabled: bool,
+) -> Result<Address, Error> {
     // Check if paused
     if storage::is_paused(env) {
         return Err(Error::ContractPaused);
@@ -148,6 +163,7 @@ pub fn create_token(
         initial_supply,
         max_supply: None,
         metadata_uri,
+        clawback_enabled,
     };
 
     // Create token

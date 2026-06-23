@@ -146,6 +146,10 @@ pub struct TokenCreationParams {
     pub initial_supply: i128,
     pub max_supply: Option<i128>,
     pub metadata_uri: Option<String>,
+    /// Whether admin clawback is enabled for this token.
+    /// This flag is **immutable after creation** — it cannot be toggled later.
+    /// Set `true` only for regulated use-cases (e.g. stablecoins, tokenized securities).
+    pub clawback_enabled: bool,
 }
 
 /// Timelock configuration
