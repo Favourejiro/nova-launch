@@ -3555,6 +3555,62 @@ impl TokenFactory {
         compliance_reporting::get_report_count(&env)
     }
 
+    /// Register a compliance rule for a jurisdiction (admin only).
+    ///
+    /// # Arguments
+    /// * `env`          – The contract environment.
+    /// * `admin`        – Admin address (must authorize).
+    /// * `jurisdiction` – Jurisdiction code, e.g. `"EU"`, `"US"`, `"APAC"`.
+    /// * `rule_type`    – The rule variant to enforce.
+    ///
+    /// # Errors
+    /// * `Error::Unauthorized`         – Caller is not the admin.
+    /// * `Error::ComplianceRuleExists` – An identical rule is already registered.
+    pub fn add_compliance_rule(
+        env: Env,
+        admin: Address,
+        jurisdiction: soroban_sdk::String,
+        rule_type: compliance_reporting::ComplianceRuleType,
+    ) -> Result<(), Error> {
+        compliance_reporting::add_compliance_rule(&env, &admin, jurisdiction, rule_type)
+    }
+
+    /// Remove a previously registered compliance rule (admin only).
+    ///
+    /// # Errors
+    /// * `Error::Unauthorized`           – Caller is not the admin.
+    /// * `Error::ComplianceRuleNotFound` – No matching rule found.
+    pub fn remove_compliance_rule(
+        env: Env,
+        admin: Address,
+        jurisdiction: soroban_sdk::String,
+        rule_type: compliance_reporting::ComplianceRuleType,
+    ) -> Result<(), Error> {
+        compliance_reporting::remove_compliance_rule(&env, &admin, jurisdiction, rule_type)
+    }
+
+    /// Evaluate all compliance rules for a jurisdiction against a transfer.
+    ///
+    /// Emits `ComplianceCheckPassed` or `ComplianceCheckFailed` on each call.
+    ///
+    /// # Errors
+    /// * `Error::ComplianceCheckFailed` – At least one rule rejected the transfer.
+    pub fn check_compliance(
+        env: Env,
+        jurisdiction: soroban_sdk::String,
+        params: compliance_reporting::TransferParams,
+    ) -> Result<(), Error> {
+        compliance_reporting::check_compliance(&env, jurisdiction, params)
+    }
+
+    /// Return all compliance rules registered for a jurisdiction.
+    pub fn get_jurisdiction_rules(
+        env: Env,
+        jurisdiction: soroban_sdk::String,
+    ) -> soroban_sdk::Vec<compliance_reporting::ComplianceRule> {
+        compliance_reporting::get_jurisdiction_rules(&env, &jurisdiction)
+    }
+
     // ═══════════════════════════════════════════════════════
     //  Multi-Signature Admin Operations
     // ═══════════════════════════════════════════════════════
