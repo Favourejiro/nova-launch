@@ -197,3 +197,31 @@ export function resolveEventListenerDown() {
 export function resolveHighApiErrorRate() {
   return resolveIncident("nova-api-high-error-rate");
 }
+
+export interface StreamDivergenceDetails {
+  streamId: number;
+  field: string;
+  onChainValue: string;
+  projectedValue: string;
+}
+
+/** Build the dedup key for a stream divergence so it can be resolved later */
+function streamDivergenceDedupKey(streamId: number, field: string): string {
+  return `nova-stream-divergence-${streamId}-${field}`;
+}
+
+/** Alert (P2) when stream reconciliation finds the projection diverging from on-chain state */
+export function alertStreamDivergence(details: StreamDivergenceDetails) {
+  return triggerIncident({
+    summary: `Nova Launch: Stream ${details.streamId} ${details.field} diverged from on-chain state`,
+    severity: "error",
+    dedupKey: streamDivergenceDedupKey(details.streamId, details.field),
+    source: "streamReconciliation",
+    customDetails: details,
+  });
+}
+
+/** Resolve a stream divergence incident once reconciliation confirms it cleared */
+export function resolveStreamDivergence(streamId: number, field: string) {
+  return resolveIncident(streamDivergenceDedupKey(streamId, field));
+}

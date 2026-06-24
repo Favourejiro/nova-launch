@@ -31,6 +31,9 @@ import { registerPoolMetrics } from "./lib/metrics/poolMetrics";
 import { prisma } from "./lib/prisma";
 import stellarEventListener from "./services/stellarEventListener";
 import websocketService from "./services/websocket";
+import jobQueue from "./services/jobQueue";
+import { streamReconciliationService } from "./services/streamReconciliation";
+import "./services/streamDivergenceAlerting";
 
 dotenv.config();
 
@@ -223,11 +226,9 @@ const server = app.listen(PORT, async () => {
   // Schedule periodic stream reconciliation if enabled
   if (process.env.ENABLE_STREAM_RECONCILIATION === "true") {
     const reconciliationInterval = parseInt(
-      process.env.STREAM_RECONCILIATION_INTERVAL_MS || "3600000"
+      process.env.STREAM_RECONCILIATION_INTERVAL_MS || "300000" // 5 minutes default
     );
-    setInterval(() => {
-      jobQueue.enqueue("stream_reconciliation", {}, {});
-    }, reconciliationInterval);
+    jobQueue.scheduleRecurring("stream_reconciliation", {}, reconciliationInterval);
     console.log(
       `📋 Stream reconciliation scheduled every ${reconciliationInterval}ms`
     );

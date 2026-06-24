@@ -301,6 +301,53 @@ describe("JobQueue", () => {
     }, 5_000);
   });
 
+  // ── Recurring schedule ────────────────────────────────────────────────────
+
+  describe("scheduleRecurring", () => {
+    it("enqueues a job on each interval tick", async () => {
+      q.register("recur", async () => {});
+      q.scheduleRecurring("recur", { x: 1 }, 20);
+
+      await flush(70); // ~3 ticks
+
+      expect(q.stats().completed).toBeGreaterThanOrEqual(2);
+      q.stopRecurring("recur");
+    });
+
+    it("is a no-op when called twice for the same type", async () => {
+      let calls = 0;
+      q.register("recur.once", async () => {
+        calls++;
+      });
+
+      q.scheduleRecurring("recur.once", {}, 20);
+      q.scheduleRecurring("recur.once", {}, 20);
+
+      await flush(50);
+      const callsAfterFirstWindow = calls;
+      q.stopRecurring("recur.once");
+      await flush(50);
+
+      // A duplicate schedule would have doubled the calls in the same window.
+      expect(callsAfterFirstWindow).toBeLessThan(4);
+      expect(calls).toBe(callsAfterFirstWindow);
+    });
+  });
+
+  describe("stopRecurring", () => {
+    it("stops enqueuing further jobs once stopped", async () => {
+      q.register("recur.stop", async () => {});
+      q.scheduleRecurring("recur.stop", {}, 20);
+
+      await flush(50);
+      q.stopRecurring("recur.stop");
+      const completedAtStop = q.stats().completed;
+
+      await flush(60);
+      expect(q.stats().completed).toBe(completedAtStop);
+    });
+  });
+
   // ── Payload size guard ────────────────────────────────────────────────────
 
   describe("payload size guard", () => {

@@ -115,6 +115,7 @@ export class JobQueue {
   private activeWorkers = 0;
   private tickTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  private recurringTimers = new Map<string, ReturnType<typeof setInterval>>();
 
   /** Counts for completed/failed (kept separately to avoid unbounded arrays). */
   private completedCount = 0;
@@ -185,6 +186,35 @@ export class JobQueue {
     if (this.tickTimer) {
       clearTimeout(this.tickTimer);
       this.tickTimer = null;
+    }
+  }
+
+  /**
+   * Enqueue a job of `type` on a recurring `intervalMs` cadence.
+   * Calling this again for a `type` that's already scheduled is a no-op —
+   * use `stopRecurring` first to change the interval.
+   */
+  scheduleRecurring<T>(
+    type: string,
+    payload: T,
+    intervalMs: number,
+    opts: EnqueueOptions = {}
+  ): void {
+    if (this.recurringTimers.has(type)) return;
+
+    const timer = setInterval(() => {
+      this.enqueue(type, payload, opts);
+    }, intervalMs);
+    timer.unref?.();
+    this.recurringTimers.set(type, timer);
+  }
+
+  /** Stop a recurring schedule previously started with `scheduleRecurring`. */
+  stopRecurring(type: string): void {
+    const timer = this.recurringTimers.get(type);
+    if (timer) {
+      clearInterval(timer);
+      this.recurringTimers.delete(type);
     }
   }
 
