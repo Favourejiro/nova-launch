@@ -7,6 +7,10 @@ import {
   TokenAnalyticsResponseDto,
   TimeSeriesDataPoint,
   PeriodStats,
+  AggregateBurnResponseDto,
+  TokenBurnSummaryDto,
+  TopBurnerDto,
+  BurnRateTrendPointDto,
 } from "./dto/analytics.dto";
 
 interface PeriodWindow {
@@ -121,6 +125,128 @@ export class AnalyticsService {
       timeSeries,
       burnTypeDistribution,
     };
+  }
+
+  async getAggregateBurnStats(
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<AggregateBurnResponseDto> {
+    const start = startDate ?? this.daysAgo(30);
+    const end = endDate ?? new Date();
+
+    const [totals, trend, top5, tokenSummaries] = await Promise.all([
+      this.getAggregateTotals(start, end),
+      this.getAggregateBurnRateTrend(start, end),
+      this.getTop5Burners(start, end),
+      this.getTokenSummaries(start, end),
+    ]);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      totalBurnedAllTokens: totals.totalVolume,
+      totalBurnCount: totals.totalCount,
+      totalUniqueTokens: totals.uniqueTokens,
+      totalUniqueBurners: totals.uniqueBurners,
+      burnRateTrend: trend,
+      top5Burners: top5,
+      tokenSummaries,
+    };
+  }
+
+  private async getAggregateTotals(start: Date, end: Date) {
+    const row = await this.dataSource.query(
+      `SELECT
+         COALESCE(SUM(amount::numeric), 0)::text AS "totalVolume",
+         COUNT(*)::int                           AS "totalCount",
+         COUNT(DISTINCT token_address)::int      AS "uniqueTokens",
+         COUNT(DISTINCT burner_address)::int     AS "uniqueBurners"
+       FROM burn_events
+       WHERE burned_at >= $1 AND burned_at < $2`,
+      [start, end]
+    );
+    return row[0] as {
+      totalVolume: string;
+      totalCount: number;
+      uniqueTokens: number;
+      uniqueBurners: number;
+    };
+  }
+
+  private async getAggregateBurnRateTrend(
+    start: Date,
+    end: Date
+  ): Promise<BurnRateTrendPointDto[]> {
+    const rows: { day: string; volume: string; count: number }[] =
+      await this.dataSource.query(
+        `SELECT
+           DATE_TRUNC('day', burned_at)::text AS day,
+           COALESCE(SUM(amount::numeric), 0)::text AS volume,
+           COUNT(*)::int AS count
+         FROM burn_events
+         WHERE burned_at >= $1 AND burned_at < $2
+         GROUP BY DATE_TRUNC('day', burned_at)
+         ORDER BY day ASC`,
+        [start, end]
+      );
+
+    return rows.map((r) => ({ date: r.day, volume: r.volume, count: r.count }));
+  }
+
+  private async getTop5Burners(start: Date, end: Date): Promise<TopBurnerDto[]> {
+    const rows: {
+      burner_address: string;
+      total_burned: string;
+      burn_count: number;
+    }[] = await this.dataSource.query(
+      `SELECT
+         burner_address,
+         COALESCE(SUM(amount::numeric), 0)::text AS total_burned,
+         COUNT(*)::int AS burn_count
+       FROM burn_events
+       WHERE burned_at >= $1 AND burned_at < $2
+       GROUP BY burner_address
+       ORDER BY SUM(amount::numeric) DESC
+       LIMIT 5`,
+      [start, end]
+    );
+
+    return rows.map((r) => ({
+      walletAddress: r.burner_address,
+      totalBurned: r.total_burned,
+      burnCount: r.burn_count,
+    }));
+  }
+
+  private async getTokenSummaries(
+    start: Date,
+    end: Date
+  ): Promise<TokenBurnSummaryDto[]> {
+    const rows: {
+      token_address: string;
+      total_burned: string;
+      burn_count: number;
+      unique_burners: number;
+    }[] = await this.dataSource.query(
+      `SELECT
+         token_address,
+         COALESCE(SUM(amount::numeric), 0)::text AS total_burned,
+         COUNT(*)::int AS burn_count,
+         COUNT(DISTINCT burner_address)::int AS unique_burners
+       FROM burn_events
+       WHERE burned_at >= $1 AND burned_at < $2
+       GROUP BY token_address
+       ORDER BY SUM(amount::numeric) DESC`,
+      [start, end]
+    );
+
+    return rows.map((r) => ({
+      tokenAddress: r.token_address,
+      totalBurned: r.total_burned,
+      burnCount: r.burn_count,
+      uniqueBurners: r.unique_burners,
+    }));
   }
 
   // ──────────────────────────────────────────────

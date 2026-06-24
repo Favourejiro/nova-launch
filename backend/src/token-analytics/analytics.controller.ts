@@ -18,8 +18,10 @@ import {
 import { AnalyticsService } from "./analytics.service";
 import {
   GetAnalyticsQueryDto,
+  GetAggregateBurnQueryDto,
   TimePeriod,
   TokenAnalyticsResponseDto,
+  AggregateBurnResponseDto,
 } from "./dto/analytics.dto";
 
 @ApiTags("Analytics")
@@ -41,6 +43,25 @@ export class AnalyticsController {
    *  - 90d  → 15 min
    *  - all  → 30 min (slow-moving data)
    */
+  @Get("burn/aggregate")
+  @HttpCode(HttpStatus.OK)
+  @CacheTTL(120_000)
+  @ApiOperation({
+    summary: "Get cross-token aggregate burn statistics",
+    description:
+      "Returns total burn volume across all tokens, a 7-day rolling burn-rate trend, the top-5 burners by wallet, and per-token summaries. Filterable by date range.",
+  })
+  @ApiQuery({ name: "startDate", required: false, description: "ISO date string for range start (default: 30 days ago)" })
+  @ApiQuery({ name: "endDate", required: false, description: "ISO date string for range end (default: now)" })
+  @ApiResponse({ status: 200, description: "Aggregate burn data", type: AggregateBurnResponseDto })
+  async getAggregateBurnStats(
+    @Query() query: GetAggregateBurnQueryDto
+  ): Promise<AggregateBurnResponseDto> {
+    const startDate = query.startDate ? new Date(query.startDate) : undefined;
+    const endDate = query.endDate ? new Date(query.endDate) : undefined;
+    return this.analyticsService.getAggregateBurnStats(startDate, endDate);
+  }
+
   @Get(":address")
   @HttpCode(HttpStatus.OK)
   @CacheTTL(300) // default 5 min; see note above
