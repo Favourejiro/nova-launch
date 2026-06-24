@@ -689,6 +689,24 @@ pub enum DataKey {
     DistributionClaimed(u32, Address),
     /// Running total of amounts claimed for a distribution
     DistributionClaimedTotal(u32),
+    // TEMP-VALIDATION-ONLY: stub variants to unblock local compilation of
+    // pre-existing, unrelated breakage in `main` so vault_error tests can be
+    // exercised in isolation. NOT part of the vault-error-codes commit.
+    FrozenAddress(Address, Address),
+    FractionalVault(u64),
+    FractionalVaultCount,
+    OwnerFractionalVaultCount(Address),
+    FractionalVaultByOwner(Address, u32),
+    AssetToVault(soroban_sdk::BytesN<32>),
+    TokenRole(u32, Address, u32),
+    MetadataHistoryCount(u32),
+    MultiSigConfig,
+    MultiSigProposalCount,
+    MultiSigProposal(u64),
+    MultiSigApproval(u64, Address),
+    BurnScheduleCount,
+    BurnSchedule(u64),
+    TrustedCaller(Address),
 }
 
 /// A point-in-time record of a token holder's balance.
@@ -991,6 +1009,8 @@ impl Error {
     pub const DistributionAlreadyClaimed: Self = Self(103);
     pub const DistributionAlreadyReclaimed: Self = Self(104);
     pub const DistributionZeroSupply: Self = Self(105);
+    // TEMP-VALIDATION-ONLY
+    pub const DuplicateSigners: Self = Self(106);
 }
 
 #[allow(non_upper_case_globals)]

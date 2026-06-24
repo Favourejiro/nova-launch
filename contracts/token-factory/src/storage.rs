@@ -1775,29 +1775,6 @@ pub fn is_trusted_caller(env: &Env, caller: &Address) -> bool {
 }
 
 // ============================================================
-// Cross-Contract Trusted Caller Storage
-// ============================================================
-
-pub fn set_trusted_caller(env: &Env, caller: &Address) {
-    env.storage()
-        .instance()
-        .set(&crate::types::DataKey::TrustedCaller(caller.clone()), &true);
-}
-
-pub fn remove_trusted_caller(env: &Env, caller: &Address) {
-    env.storage()
-        .instance()
-        .remove(&crate::types::DataKey::TrustedCaller(caller.clone()));
-}
-
-pub fn is_trusted_caller(env: &Env, caller: &Address) -> bool {
-    env.storage()
-        .instance()
-        .get::<_, bool>(&crate::types::DataKey::TrustedCaller(caller.clone()))
-        .unwrap_or(false)
-}
-
-// ============================================================
 // Metadata Content Hash Storage (#1131)
 // ============================================================
 

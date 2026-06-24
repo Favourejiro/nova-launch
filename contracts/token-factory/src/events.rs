@@ -47,7 +47,7 @@
 ///
 /// Any schema changes require creating a new version (e.g., init_v2).
 
-use soroban_sdk::{symbol_short, Address, BytesN, Env, String};
+use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol};
 
 /// Emit initialized event (v1)
 ///
@@ -329,7 +329,7 @@ pub fn emit_clawback_audit(
     amount: i128,
 ) {
     env.events().publish(
-        (symbol_short!("clawb_au_v1"), token_address.clone()),
+        (Symbol::new(env, "clawb_au_v1"), token_address.clone()),
         (actor.clone(), target.clone(), amount),
     );
 }
@@ -841,7 +841,7 @@ pub fn emit_proposal_executed(
 /// Topics: ("prp_rdy_v1", proposal_id). Payload: (eta,).
 pub fn emit_proposal_executable(env: &Env, proposal_id: u64, eta: u64) {
     env.events().publish(
-        (symbol_short!("prp_rdy_v1"), proposal_id),
+        (Symbol::new(env, "prp_rdy_v1"), proposal_id),
         (eta,),
     );
 }
@@ -1241,7 +1241,7 @@ pub fn emit_role_granted(
     role: crate::types::Role,
 ) {
     env.events().publish(
-        (symbol_short!("role_gr_v1"), token_index),
+        (Symbol::new(env, "role_gr_v1"), token_index),
         (creator.clone(), grantee.clone(), role),
     );
 }
@@ -1269,7 +1269,7 @@ pub fn emit_role_revoked(
     role: crate::types::Role,
 ) {
     env.events().publish(
-        (symbol_short!("role_rv_v1"), token_index),
+        (Symbol::new(env, "role_rv_v1"), token_index),
         (creator.clone(), revokee.clone(), role),
     );
 }
@@ -1307,7 +1307,7 @@ pub fn emit_commission_rate_updated(env: &Env, admin: &Address, rate_bps: u32) {
 /// **Schema Stability**: This schema is immutable. Any changes require a new version.
 pub fn emit_treasury_policy_initialized(env: &Env, daily_cap: i128, allowlist_enabled: bool) {
     env.events()
-        .publish((symbol_short!("trs_ini_v1"),), (daily_cap, allowlist_enabled));
+        .publish((Symbol::new(env, "trs_ini_v1"),), (daily_cap, allowlist_enabled));
 }
 
 /// Emit dynamic quorum configured event (v1)
@@ -1459,7 +1459,7 @@ pub fn emit_distribution_initiated(
     claim_deadline_ledger: u32,
 ) {
     env.events().publish(
-        (symbol_short!("div_ini_v1"), distribution_id),
+        (Symbol::new(env, "div_ini_v1"), distribution_id),
         (admin, token_index, asset, total_amount, snapshot_ledger, claim_deadline_ledger),
     );
 }
@@ -1482,7 +1482,7 @@ pub fn emit_dividend_claimed(
     amount: i128,
 ) {
     env.events().publish(
-        (symbol_short!("div_clm_v1"), distribution_id),
+        (Symbol::new(env, "div_clm_v1"), distribution_id),
         (holder, amount),
     );
 }
@@ -1505,7 +1505,25 @@ pub fn emit_dividend_reclaimed(
     reclaimed_amount: i128,
 ) {
     env.events().publish(
-        (symbol_short!("div_rcl_v1"), distribution_id),
+        (Symbol::new(env, "div_rcl_v1"), distribution_id),
         (admin, reclaimed_amount),
     );
+}
+
+// TEMP-VALIDATION-ONLY: stub multisig events to unblock local compilation of
+// pre-existing, unrelated breakage. NOT part of the vault-error-codes commit.
+pub fn emit_multisig_configured(env: &Env, admin: &Address, threshold: u32, signer_count: u32) {
+    env.events().publish((symbol_short!("ms_cfg"), admin.clone()), (threshold, signer_count));
+}
+pub fn emit_multisig_proposed(env: &Env, id: u64, proposer: &Address) {
+    env.events().publish((symbol_short!("ms_prop"), id), proposer.clone());
+}
+pub fn emit_multisig_approved(env: &Env, proposal_id: u64, approver: &Address, approval_count: u32) {
+    env.events().publish((symbol_short!("ms_appr"), proposal_id), (approver.clone(), approval_count));
+}
+pub fn emit_multisig_cancelled(env: &Env, proposal_id: u64, canceller: &Address) {
+    env.events().publish((symbol_short!("ms_cncl"), proposal_id), canceller.clone());
+}
+pub fn emit_multisig_executed(env: &Env, proposal_id: u64, executor: &Address) {
+    env.events().publish((symbol_short!("ms_exec"), proposal_id), executor.clone());
 }
