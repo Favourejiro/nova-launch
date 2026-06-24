@@ -328,6 +328,20 @@ export const eventsProcessedTotal = new Counter({
   registers: [register],
 });
 
+/**
+ * Counts occurrences of the `campaign.event_reordered` projection event —
+ * emitted whenever the campaign event buffer (see
+ * `services/campaignEventBuffer.ts`) detects that an incoming Stellar event
+ * arrived out of ledger order for its campaign stream and had to be held
+ * back / reordered before being applied to the projection.
+ */
+export const campaignEventReorderedTotal = new Counter({
+  name: "campaign_event_reordered_total",
+  help: "Total number of campaign projection events buffered due to out-of-order ledger delivery (campaign.event_reordered)",
+  labelNames: ["event_type", "reason"],
+  registers: [register],
+});
+
 // ---------------------------------------------------------------------------
 // Webhook Metrics
 // ---------------------------------------------------------------------------
@@ -449,6 +463,20 @@ export class IntegrationMetrics {
     status: "success" | "failure"
   ): void {
     eventsProcessedTotal.inc({ event_type: eventType, status });
+  }
+
+  /**
+   * Emits the `campaign.event_reordered` metric. Call this whenever the
+   * campaign event buffer holds back an out-of-order event (ledger sequence
+   * lower than the last-applied sequence for that campaign stream) so it can
+   * be replayed in the correct order, or flushes a buffer window that was
+   * never fully back in order before the buffer timeout elapsed.
+   */
+  static recordCampaignEventReordered(
+    eventType: string,
+    reason: "out_of_order" | "timeout_flush" = "out_of_order"
+  ): void {
+    campaignEventReorderedTotal.inc({ event_type: eventType, reason });
   }
 
   static recordWebhookDelivery(
