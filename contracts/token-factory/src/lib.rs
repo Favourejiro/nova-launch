@@ -119,6 +119,9 @@ mod cross_contract_auth_test;
 mod governance_quorum_test;
 
 #[cfg(test)]
+mod governance_snapshot_test;
+
+#[cfg(test)]
 mod multisig_test;
 
 // #[cfg(test)]
@@ -161,7 +164,6 @@ use types::{
     StreamParams, TokenCreationParams, TokenInfo, TokenStats, Vault, VaultStatus,
 };
 use crate::milestone_verification::MilestoneVerifier;
-use crate::snapshot;
 
 #[contract]
 pub struct TokenFactory;
@@ -1746,7 +1748,7 @@ impl TokenFactory {
     /// * `Error::Unauthorized` - Caller is not the token creator
     ///
     /// # Events
-    /// Emits `role_gr_v1` with token_index, creator, grantee, and role
+    /// Emits `role_gr1` with token_index, creator, grantee, and role
     pub fn grant_role(
         env: Env,
         creator: Address,
@@ -1788,7 +1790,7 @@ impl TokenFactory {
     /// * `Error::Unauthorized` - Caller is not the token creator
     ///
     /// # Events
-    /// Emits `role_rv_v1` with token_index, creator, revokee, and role
+    /// Emits `role_rv1` with token_index, creator, revokee, and role
     pub fn revoke_role(
         env: Env,
         creator: Address,
@@ -3507,6 +3509,36 @@ impl TokenFactory {
 
     pub fn get_vote_counts(env: Env, proposal_id: u64) -> Option<(i128, i128, i128)> {
         timelock::get_vote_counts(&env, proposal_id)
+    }
+
+    /// Emit a `ProposalStateSnapshot` event for every currently active
+    /// governance proposal (#1383).
+    ///
+    /// Off-chain analytics indexers can use these periodic snapshots as
+    /// fast-forward checkpoints: instead of replaying the full event log
+    /// from genesis to reconstruct proposal state, a consumer can start
+    /// from the most recent snapshot for a proposal and replay only the
+    /// events emitted after it. Snapshots are derived directly from the
+    /// same persisted `Proposal` state used by voting/finalization, so they
+    /// never diverge from the accumulated event stream.
+    ///
+    /// In addition to this manual/on-demand entry point, snapshots are also
+    /// emitted automatically roughly every 1000 ledgers per active proposal
+    /// whenever `create_proposal` or `vote_proposal` is called (Soroban has
+    /// no native scheduler, so the trigger piggybacks on proposal-mutating
+    /// transactions).
+    ///
+    /// # Arguments
+    /// * `env`   - Contract environment
+    /// * `admin` - Admin address (must authorize and match stored admin)
+    ///
+    /// # Returns
+    /// The number of proposals snapshotted.
+    ///
+    /// # Errors
+    /// * `Error::Unauthorized` - Caller is not the admin
+    pub fn snapshot_proposals(env: Env, admin: Address) -> Result<u32, Error> {
+        governance::snapshot_proposals(&env, &admin)
     }
 
     // ═══════════════════════════════════════════════════════════════════════

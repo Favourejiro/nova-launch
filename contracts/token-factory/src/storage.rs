@@ -1291,6 +1291,24 @@ pub fn get_vote(env: &Env, proposal_id: u64, voter: &Address) -> Option<crate::t
         .get(&DataKey::ProposalVote(proposal_id, voter.clone()))
 }
 
+/// Get the ledger sequence at which a `ProposalStateSnapshot` event was last
+/// emitted for `proposal_id`. Returns 0 if no snapshot has ever been taken.
+pub fn get_proposal_last_snapshot_ledger(env: &Env, proposal_id: u64) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ProposalLastSnapshotLedger(proposal_id))
+        .unwrap_or(0)
+}
+
+/// Record the ledger sequence at which a `ProposalStateSnapshot` event was
+/// emitted for `proposal_id`, so future triggers know when the next snapshot
+/// is due.
+pub fn set_proposal_last_snapshot_ledger(env: &Env, proposal_id: u64, ledger: u32) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::ProposalLastSnapshotLedger(proposal_id), &ledger);
+}
+
 // ============================================================
 // Storage Functions - Address Freezing (Transfer Restrictions)
 // ============================================================
@@ -1767,29 +1785,6 @@ pub fn remove_trusted_caller(env: &Env, caller: &Address) {
 }
 
 /// Check whether an address is a registered trusted caller.
-pub fn is_trusted_caller(env: &Env, caller: &Address) -> bool {
-    env.storage()
-        .instance()
-        .get::<_, bool>(&crate::types::DataKey::TrustedCaller(caller.clone()))
-        .unwrap_or(false)
-}
-
-// ============================================================
-// Cross-Contract Trusted Caller Storage
-// ============================================================
-
-pub fn set_trusted_caller(env: &Env, caller: &Address) {
-    env.storage()
-        .instance()
-        .set(&crate::types::DataKey::TrustedCaller(caller.clone()), &true);
-}
-
-pub fn remove_trusted_caller(env: &Env, caller: &Address) {
-    env.storage()
-        .instance()
-        .remove(&crate::types::DataKey::TrustedCaller(caller.clone()));
-}
-
 pub fn is_trusted_caller(env: &Env, caller: &Address) -> bool {
     env.storage()
         .instance()

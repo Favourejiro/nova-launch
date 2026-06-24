@@ -567,6 +567,10 @@ pub fn create_proposal(
         eta,
     );
 
+    // Opportunistically emit a state snapshot if this proposal (or another
+    // active one touched via this entry point) is due for one (#1383).
+    crate::governance::maybe_auto_snapshot(env, proposal_id, &proposal);
+
     Ok(proposal_id)
 }
 
@@ -1082,6 +1086,10 @@ pub fn vote_proposal(
 
     // Emit event
     events::emit_proposal_voted(env, proposal_id, voter, support);
+
+    // Opportunistically emit a state snapshot if enough ledgers have
+    // elapsed since this proposal's last snapshot (#1383).
+    crate::governance::maybe_auto_snapshot(env, proposal_id, &proposal);
 
     Ok(())
 }

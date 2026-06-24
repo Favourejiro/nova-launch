@@ -26,7 +26,6 @@ fn validate_token_params(
 
     // Validate initial supply (must be positive)
     if initial_supply <= 0 {
-        crate::events::emit_error_detail(env, Error::InvalidTokenParams as u32, initial_supply);
         return Err(Error::InvalidTokenParams);
     }
 
@@ -133,7 +132,7 @@ pub fn create_token(
     // Calculate and verify fee
     let required_fee = calculate_creation_fee(env, metadata_uri.is_some());
     if fee_payment < required_fee {
-        crate::events::emit_error_detail(env, Error::InsufficientFee as u32, required_fee - fee_payment);
+        crate::events::emit_error_detail(env, Error::InsufficientFee.0, required_fee - fee_payment);
         return Err(Error::InsufficientFee);
     }
 
@@ -161,7 +160,7 @@ pub fn create_token(
     
     // Validate treasury is not the creator or zero address (though generate_address handles zero usually)
     if treasury == creator {
-        crate::events::emit_error_detail(env, Error::InvalidParameters as u32, 100); // 100 = self treasury
+        crate::events::emit_error_detail(env, Error::InvalidParameters.0, 100); // 100 = self treasury
         return Err(Error::InvalidParameters);
     }
 

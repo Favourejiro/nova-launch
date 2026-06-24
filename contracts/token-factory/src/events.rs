@@ -307,10 +307,10 @@ pub fn emit_clawback_toggled(env: &Env, token_address: &Address, admin: &Address
 /// Emit clawback audit event (v1) - #1149
 ///
 /// **Schema Version**: 1
-/// **Event Name**: clawb_au_v1
+/// **Event Name**: clawb_au1
 ///
 /// **Topics** (indexed):
-/// - Event name: "clawb_au_v1"
+/// - Event name: "clawb_au1"
 /// - token_address: Address - The token contract address
 ///
 /// **Payload** (non-indexed):
@@ -329,7 +329,7 @@ pub fn emit_clawback_audit(
     amount: i128,
 ) {
     env.events().publish(
-        (symbol_short!("clawb_au_v1"), token_address.clone()),
+        (symbol_short!("clawb_au1"), token_address.clone()),
         (actor.clone(), target.clone(), amount),
     );
 }
@@ -838,10 +838,10 @@ pub fn emit_proposal_executed(
 /// Emit proposal executable event
 ///
 /// Published when a proposal's timelock delay has elapsed and it is ready to execute.
-/// Topics: ("prp_rdy_v1", proposal_id). Payload: (eta,).
+/// Topics: ("prp_rdy1", proposal_id). Payload: (eta,).
 pub fn emit_proposal_executable(env: &Env, proposal_id: u64, eta: u64) {
     env.events().publish(
-        (symbol_short!("prp_rdy_v1"), proposal_id),
+        (symbol_short!("prp_rdy1"), proposal_id),
         (eta,),
     );
 }
@@ -851,6 +851,46 @@ pub fn emit_proposal_cancelled(env: &Env, proposal_id: u64, cancelled_by: &Addre
     env.events().publish(
         (symbol_short!("prop_cncl"), proposal_id),
         (cancelled_by,),
+    );
+}
+
+/// Emit a governance proposal state snapshot event (#1383).
+///
+/// Published periodically (every `SNAPSHOT_INTERVAL_LEDGERS` ledgers, see
+/// `governance::SNAPSHOT_INTERVAL_LEDGERS`) for every active proposal, and on
+/// demand via the `snapshot_proposals` entry point. Off-chain indexers can
+/// use these snapshots as checkpoints: instead of replaying every event from
+/// genesis, a consumer can start from the most recent snapshot for a
+/// proposal and only replay events emitted after it, while still arriving at
+/// state that is fully consistent with the accumulated event stream.
+///
+/// **Schema Version**: 1
+/// **Event Name**: prop_snap
+///
+/// **Topics** (indexed):
+/// - Event name: "prop_snap"
+/// - proposal_id: u64 - The proposal this snapshot describes
+///
+/// **Payload** (non-indexed):
+/// - status: ProposalState - The proposal's state at snapshot time
+/// - yes_votes: i128 - Accumulated "for" votes at snapshot time
+/// - no_votes: i128 - Accumulated "against" votes at snapshot time
+/// - quorum_required: i128 - The vote weight required to meet quorum at snapshot time
+/// - ledger: u32 - The ledger sequence at which the snapshot was taken
+///
+/// **Schema Stability**: This schema is immutable. Any changes require a new version.
+pub fn emit_proposal_state_snapshot(
+    env: &Env,
+    proposal_id: u64,
+    status: crate::types::ProposalState,
+    yes_votes: i128,
+    no_votes: i128,
+    quorum_required: i128,
+    ledger: u32,
+) {
+    env.events().publish(
+        (symbol_short!("prop_snap"), proposal_id),
+        (status, yes_votes, no_votes, quorum_required, ledger),
     );
 }
 
@@ -1171,10 +1211,10 @@ pub fn emit_commission_paid(env: &Env, referrer: &Address, token_index: u32, amo
 /// Emit role granted event (v1)
 ///
 /// **Schema Version**: 1
-/// **Event Name**: role_gr_v1
+/// **Event Name**: role_gr1
 ///
 /// **Topics** (indexed):
-/// - Event name: "role_gr_v1"
+/// - Event name: "role_gr1"
 /// - token_index: u32 - The token this role applies to
 ///
 /// **Payload** (non-indexed):
@@ -1191,7 +1231,7 @@ pub fn emit_role_granted(
     role: crate::types::Role,
 ) {
     env.events().publish(
-        (symbol_short!("role_gr_v1"), token_index),
+        (symbol_short!("role_gr1"), token_index),
         (creator.clone(), grantee.clone(), role),
     );
 }
@@ -1199,10 +1239,10 @@ pub fn emit_role_granted(
 /// Emit role revoked event (v1)
 ///
 /// **Schema Version**: 1
-/// **Event Name**: role_rv_v1
+/// **Event Name**: role_rv1
 ///
 /// **Topics** (indexed):
-/// - Event name: "role_rv_v1"
+/// - Event name: "role_rv1"
 /// - token_index: u32 - The token this role applies to
 ///
 /// **Payload** (non-indexed):
@@ -1219,7 +1259,7 @@ pub fn emit_role_revoked(
     role: crate::types::Role,
 ) {
     env.events().publish(
-        (symbol_short!("role_rv_v1"), token_index),
+        (symbol_short!("role_rv1"), token_index),
         (creator.clone(), revokee.clone(), role),
     );
 }
@@ -1245,10 +1285,10 @@ pub fn emit_commission_rate_updated(env: &Env, admin: &Address, rate_bps: u32) {
 /// Emit treasury policy initialized event (v1)
 ///
 /// **Schema Version**: 1
-/// **Event Name**: trs_ini_v1
+/// **Event Name**: trs_ini1
 ///
 /// **Topics** (indexed):
-/// - Event name: "trs_ini_v1"
+/// - Event name: "trs_ini1"
 ///
 /// **Payload** (non-indexed):
 /// - daily_cap: i128 - The daily withdrawal cap in stroops
@@ -1257,7 +1297,7 @@ pub fn emit_commission_rate_updated(env: &Env, admin: &Address, rate_bps: u32) {
 /// **Schema Stability**: This schema is immutable. Any changes require a new version.
 pub fn emit_treasury_policy_initialized(env: &Env, daily_cap: i128, allowlist_enabled: bool) {
     env.events()
-        .publish((symbol_short!("trs_ini_v1"),), (daily_cap, allowlist_enabled));
+        .publish((symbol_short!("trs_ini1"),), (daily_cap, allowlist_enabled));
 }
 
 /// Emit dynamic quorum configured event (v1)
@@ -1386,7 +1426,7 @@ pub fn emit_vault_owner_changed(
 /// Emitted when a new distribution round is initiated.
 ///
 /// **Schema Version**: 1
-/// **Event Name**: div_ini_v1
+/// **Event Name**: div_ini1
 ///
 /// **Topics** (indexed):
 /// - distribution_id: u32
@@ -1409,7 +1449,7 @@ pub fn emit_distribution_initiated(
     claim_deadline_ledger: u32,
 ) {
     env.events().publish(
-        (symbol_short!("div_ini_v1"), distribution_id),
+        (symbol_short!("div_ini1"), distribution_id),
         (admin, token_index, asset, total_amount, snapshot_ledger, claim_deadline_ledger),
     );
 }
@@ -1417,7 +1457,7 @@ pub fn emit_distribution_initiated(
 /// Emitted when a holder claims their dividend share.
 ///
 /// **Schema Version**: 1
-/// **Event Name**: div_clm_v1
+/// **Event Name**: div_clm1
 ///
 /// **Topics** (indexed):
 /// - distribution_id: u32
@@ -1432,7 +1472,7 @@ pub fn emit_dividend_claimed(
     amount: i128,
 ) {
     env.events().publish(
-        (symbol_short!("div_clm_v1"), distribution_id),
+        (symbol_short!("div_clm1"), distribution_id),
         (holder, amount),
     );
 }
@@ -1440,7 +1480,7 @@ pub fn emit_dividend_claimed(
 /// Emitted when the admin reclaims unclaimed dividends after the window closes.
 ///
 /// **Schema Version**: 1
-/// **Event Name**: div_rcl_v1
+/// **Event Name**: div_rcl1
 ///
 /// **Topics** (indexed):
 /// - distribution_id: u32
@@ -1455,7 +1495,94 @@ pub fn emit_dividend_reclaimed(
     reclaimed_amount: i128,
 ) {
     env.events().publish(
-        (symbol_short!("div_rcl_v1"), distribution_id),
+        (symbol_short!("div_rcl1"), distribution_id),
         (admin, reclaimed_amount),
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Multi-Signature Admin Operation Events
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Emitted when the multi-sig signer set / threshold is configured.
+///
+/// **Schema Version**: 1
+/// **Event Name**: msig_cfg1
+///
+/// **Payload**:
+/// - admin: Address
+/// - threshold: u32
+/// - signer_count: u32
+pub fn emit_multisig_configured(env: &Env, admin: &Address, threshold: u32, signer_count: u32) {
+    env.events().publish(
+        (symbol_short!("msig_cfg1"),),
+        (admin.clone(), threshold, signer_count),
+    );
+}
+
+/// Emitted when a new multi-sig proposal is created.
+///
+/// **Schema Version**: 1
+/// **Event Name**: msig_pr1
+///
+/// **Topics** (indexed):
+/// - proposal_id: u64
+///
+/// **Payload**:
+/// - proposer: Address
+pub fn emit_multisig_proposed(env: &Env, proposal_id: u64, proposer: &Address) {
+    env.events()
+        .publish((symbol_short!("msig_pr1"), proposal_id), (proposer.clone(),));
+}
+
+/// Emitted when a signer approves a multi-sig proposal.
+///
+/// **Schema Version**: 1
+/// **Event Name**: msig_ap1
+///
+/// **Topics** (indexed):
+/// - proposal_id: u64
+///
+/// **Payload**:
+/// - approver: Address
+/// - approval_count: u32
+pub fn emit_multisig_approved(env: &Env, proposal_id: u64, approver: &Address, approval_count: u32) {
+    env.events().publish(
+        (symbol_short!("msig_ap1"), proposal_id),
+        (approver.clone(), approval_count),
+    );
+}
+
+/// Emitted when a pending multi-sig proposal is cancelled.
+///
+/// **Schema Version**: 1
+/// **Event Name**: msig_cn1
+///
+/// **Topics** (indexed):
+/// - proposal_id: u64
+///
+/// **Payload**:
+/// - cancelled_by: Address
+pub fn emit_multisig_cancelled(env: &Env, proposal_id: u64, cancelled_by: &Address) {
+    env.events().publish(
+        (symbol_short!("msig_cn1"), proposal_id),
+        (cancelled_by.clone(),),
+    );
+}
+
+/// Emitted when a multi-sig proposal is executed (threshold reached).
+///
+/// **Schema Version**: 1
+/// **Event Name**: msig_ex1
+///
+/// **Topics** (indexed):
+/// - proposal_id: u64
+///
+/// **Payload**:
+/// - executor: Address
+pub fn emit_multisig_executed(env: &Env, proposal_id: u64, executor: &Address) {
+    env.events().publish(
+        (symbol_short!("msig_ex1"), proposal_id),
+        (executor.clone(),),
     );
 }

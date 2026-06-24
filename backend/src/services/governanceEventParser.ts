@@ -5,6 +5,7 @@ import {
   ProposalExecutedEvent,
   ProposalCancelledEvent,
   ProposalStatusChangedEvent,
+  ProposalStateSnapshotEvent,
   GovernanceEvent,
 } from '../types/governance';
 
@@ -323,6 +324,60 @@ export class GovernanceEventParser {
   }
 
   /**
+   * Parse and persist a proposal state snapshot event (#1383).
+   *
+   * Snapshots are periodic/on-demand checkpoints of a proposal's fully
+   * accumulated state (status + vote tallies as of a given ledger). They
+   * let an indexer fast-forward instead of replaying every event from
+   * genesis: this handler simply fast-forwards the proposal's `status` to
+   * match the snapshot.
+   *
+   * Snapshots are derived from, and must always agree with, the same
+   * persisted contract state used by `vote_cast`/`proposal_status_changed`
+   * events, so applying one is idempotent and never diverges from a full
+   * event replay — applying it twice (or out of order with a slightly
+   * stale snapshot) only ever re-asserts a status the proposal already
+   * passed through.
+   *
+   * Unlike the other handlers, a missing proposal is *not* treated as an
+   * error: a snapshot may be the very first event an indexer observes when
+   * fast-forwarding from a checkpoint, before the originating
+   * `proposal_created` event (which may predate the indexer's replay
+   * window) has been (re)played.
+   */
+  async parseProposalStateSnapshotEvent(event: ProposalStateSnapshotEvent): Promise<void> {
+    try {
+      const proposal = await this.prisma.proposal.findUnique({
+        where: { proposalId: event.proposalId },
+      });
+
+      if (!proposal) {
+        console.warn(
+          `[GovernanceEventParser] Snapshot for unknown proposal ${event.proposalId} ` +
+            `at ledger ${event.snapshotLedger} — skipping (proposal not yet indexed)`,
+        );
+        return;
+      }
+
+      await this.prisma.proposal.update({
+        where: { id: proposal.id },
+        data: {
+          status: event.status as ProposalStatus,
+        },
+      });
+
+      console.log(
+        `Proposal ${event.proposalId} snapshot at ledger ${event.snapshotLedger}: ` +
+          `status=${event.status} yes=${event.yesVotes} no=${event.noVotes} ` +
+          `quorumRequired=${event.quorumRequired}`,
+      );
+    } catch (error) {
+      console.error(`Error parsing proposal state snapshot event:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Parse any governance event
    */
   async parseEvent(event: GovernanceEvent): Promise<void> {
@@ -341,6 +396,9 @@ export class GovernanceEventParser {
         break;
       case 'proposal_status_changed':
         await this.parseProposalStatusChangedEvent(event);
+        break;
+      case 'proposal_state_snapshot':
+        await this.parseProposalStateSnapshotEvent(event);
         break;
       default:
         console.warn(`Unknown governance event type:`, event);

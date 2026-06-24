@@ -1,7 +1,7 @@
 use crate::events;
 use crate::storage;
 use crate::types::{Error, StreamInfo, StreamParams};
-use soroban_sdk::{testutils::Ledger, Address, Env, Vec};
+use soroban_sdk::{Address, Env, Vec};
 
 /// Maximum number of streams in a batch operation
 const MAX_BATCH_SIZE: u32 = 100;
@@ -260,6 +260,7 @@ pub fn batch_create_streams(
             metadata: None,
             cancelled: false,
             paused: false,
+            disputed: false,
         };
 
         storage::set_stream(env, stream_id, &stream);
