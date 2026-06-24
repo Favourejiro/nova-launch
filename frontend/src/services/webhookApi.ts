@@ -36,6 +36,12 @@ export interface WebhookDeliveryLog {
   createdAt: string;
 }
 
+export interface WebhookDeliveryVerification {
+  verified: boolean;
+  keyId: string;
+  algorithm: string;
+}
+
 export interface CreateWebhookInput {
   url: string;
   tokenAddress?: string | null;
@@ -109,6 +115,12 @@ export const webhookApi = {
    */
   getLogs: (id: string, limit = 50) =>
     request<WebhookDeliveryLog[]>(`/${id}/logs?limit=${limit}`),
+
+  /**
+   * Get HMAC signature verification status for a single delivery log entry
+   */
+  getDeliveryVerification: (deliveryId: string) =>
+    request<WebhookDeliveryVerification>(`/deliveries/${deliveryId}/verification`),
 
   /**
    * Test a webhook subscription
