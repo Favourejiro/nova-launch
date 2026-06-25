@@ -5,7 +5,8 @@ import usersRouter from "./users";
 import auditRouter from "./audit";
 import operationalRouter from "./operational";
 import backupRouter from "./backup";
-import jobsRouter from "./jobs";
+import governanceRouter from "./governance";
+import treasuryRouter from "./treasury";
 
 const router = Router();
 
@@ -16,6 +17,7 @@ router.use("/audit", auditRouter);
 router.use("/audit", auditArchiveRouter);
 router.use("/operational", operationalRouter);
 router.use("/backup", backupRouter);
-router.use("/jobs", jobsRouter);
+router.use("/governance/timelock", governanceRouter);
+router.use("/treasury/policy", treasuryRouter);
 
 export default router;
