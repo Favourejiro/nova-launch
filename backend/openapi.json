@@ -1830,20 +1830,93 @@
       }
     },
     "schemas": {
-      "DeadLetterJob": {
+      "WalletAuthRequest": {
         "type": "object",
+        "required": ["publicKey", "signature", "nonce"],
         "properties": {
-          "id": { "type": "string", "example": "job_lz4k2_x9abc" },
-          "type": { "type": "string", "example": "email.send" },
-          "payload": { "type": "object" },
-          "priority": { "type": "integer", "example": 0 },
-          "attempts": { "type": "integer", "example": 3 },
-          "maxRetries": { "type": "integer", "example": 3 },
-          "status": { "type": "string", "enum": ["dead"], "example": "dead" },
-          "createdAt": { "type": "string", "format": "date-time" },
-          "runAt": { "type": "string", "format": "date-time" },
-          "startedAt": { "type": "string", "format": "date-time" },
-          "error": { "type": "string", "example": "SMTP connection refused" }
+          "publicKey": {
+            "type": "string",
+            "minLength": 56,
+            "maxLength": 56,
+            "pattern": "^G[A-Z2-7]{55}$",
+            "description": "Stellar wallet public key (G-address, 56 characters)",
+            "example": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
+          },
+          "signature": {
+            "type": "string",
+            "description": "Ed25519 signature over the nonce, base64-encoded",
+            "example": "aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789+/aBcDeFgHiJkLmNoPqRsTuVwXyZ012="
+          },
+          "nonce": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The nonce value returned by POST /auth/challenge",
+            "example": "3f7e1b2a-9c4d-4e8f-a1b2-c3d4e5f60718"
+          }
+        }
+      },
+      "RefreshTokenRequest": {
+        "type": "object",
+        "required": ["refreshToken"],
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "description": "A valid, non-expired JWT refresh token previously issued by POST /auth/verify or POST /auth/refresh",
+            "example": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQUFaST..."
+          }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "required": ["accessToken", "refreshToken", "expiresIn", "tokenType", "walletAddress"],
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "Short-lived JWT access token (Bearer). Valid for 15 minutes.",
+            "example": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQUFaST..."
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "Longer-lived JWT refresh token. Valid for 7 days.",
+            "example": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQUFaST..."
+          },
+          "expiresIn": {
+            "type": "integer",
+            "description": "Seconds until the access token expires.",
+            "example": 900
+          },
+          "tokenType": {
+            "type": "string",
+            "description": "Token type — always 'Bearer'.",
+            "example": "Bearer"
+          },
+          "walletAddress": {
+            "type": "string",
+            "description": "Stellar wallet address (G-address) of the authenticated user.",
+            "example": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
+          }
+        }
+      },
+      "NonceResponse": {
+        "type": "object",
+        "required": ["nonce", "expiresAt", "message"],
+        "properties": {
+          "nonce": {
+            "type": "string",
+            "format": "uuid",
+            "description": "One-time nonce (UUID v4) to be signed by the wallet.",
+            "example": "3f7e1b2a-9c4d-4e8f-a1b2-c3d4e5f60718"
+          },
+          "expiresAt": {
+            "type": "integer",
+            "description": "Unix timestamp (seconds) at which the nonce expires.",
+            "example": 1719100800
+          },
+          "message": {
+            "type": "string",
+            "description": "Full challenge message that the wallet must sign.",
+            "example": "Sign this message to authenticate: 3f7e1b2a-9c4d-4e8f-a1b2-c3d4e5f60718"
+          }
         }
       },
       "ErrorResponse": {
