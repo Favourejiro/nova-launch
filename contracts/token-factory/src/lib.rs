@@ -3981,6 +3981,9 @@ impl TokenFactory {
 #[cfg(test)]
 mod burn_auction_test;
 
+#[cfg(all(test, feature = "legacy-tests"))]
+mod fuzz_burn_auction;
+
 // Temporarily disabled - requires create_token implementation
 // #[cfg(test)]
 // mod test;
