@@ -641,7 +641,7 @@ fn test_treasury_policy_initialized_event_emitted() {
 }
 
 #[test]
-fn test_trsini_v1_schema() {
+fn test_trs_ini1_schema() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin, _) = setup_factory(&env);
@@ -655,10 +655,11 @@ fn test_trsini_v1_schema() {
 
     // Validate topic
     let topics = &event.0;
-    assert_eq!(topics.len(), 1, "trsini_v1 must have exactly 1 topic");
-    assert!(
-        topic_is(&env, &topics.get(0).unwrap(), symbol_short!("trsini_v1")),
-        "Event name must be 'trsini_v1'"
+    assert_eq!(topics.len(), 1, "trs_ini1 must have exactly 1 topic");
+    assert_eq!(
+        topics.get(0).unwrap(),
+        soroban_sdk::Val::from(symbol_short!("trs_ini1")),
+        "Event name must be 'trs_ini1'"
     );
 
     // Validate payload: (daily_cap, allowlist_enabled)
@@ -762,19 +763,19 @@ fn test_dynamic_quorum_configured_disabled() {
 
 #[test]
 fn test_new_event_names_within_limit() {
-    // Verify all new versioned event names are ≤ 10 characters
-    let new_event_names = [
-        "role_grv1",  // 10 chars
-        "role_rvv1",  // 10 chars
+    // Verify all new versioned event names are ≤ 9 characters (Soroban Symbol::short limit)
+    let new_event_names = vec![
+        "role_gr1",  // 8 chars
+        "role_rv1",  // 8 chars
         "com_rt_v1",   // 9 chars
-        "trsini_v1",  // 10 chars
+        "trs_ini1",  // 8 chars
         "dq_cfg_v1",   // 9 chars
     ];
 
     for name in new_event_names {
         assert!(
-            name.len() <= 10,
-            "Event name '{}' exceeds 10-character limit (length: {})",
+            name.len() <= 9,
+            "Event name '{}' exceeds 9-character limit (length: {})",
             name,
             name.len()
         );
@@ -784,10 +785,10 @@ fn test_new_event_names_within_limit() {
 #[test]
 fn test_new_versioned_event_names_compile() {
     let _env = Env::default();
-    let _ = symbol_short!("role_grv1");
-    let _ = symbol_short!("role_rvv1");
+    let _ = symbol_short!("role_gr1");
+    let _ = symbol_short!("role_rv1");
     let _ = symbol_short!("com_rt_v1");
-    let _ = symbol_short!("trsini_v1");
+    let _ = symbol_short!("trs_ini1");
     let _ = symbol_short!("dq_cfg_v1");
     assert!(true, "All new versioned event names compile successfully");
 }

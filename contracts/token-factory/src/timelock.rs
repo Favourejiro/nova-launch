@@ -621,13 +621,9 @@ pub fn create_proposal(
         eta,
     );
 
-    // Fee-update proposals get a dedicated, strongly-typed event in addition
-    // to the generic proposal event so indexers can track fee governance
-    // without decoding the raw payload bytes (#1385).
-    if action_type == ActionType::FeeChange {
-        let (base_fee, metadata_fee) = payload_validation::parse_fee_payload(&proposal.payload);
-        events::emit_fee_update_proposed(env, proposal_id, proposer, base_fee, metadata_fee, eta);
-    }
+    // Opportunistically emit a state snapshot if this proposal (or another
+    // active one touched via this entry point) is due for one (#1383).
+    crate::governance::maybe_auto_snapshot(env, proposal_id, &proposal);
 
     Ok(proposal_id)
 }
@@ -1148,6 +1144,10 @@ pub fn vote_proposal(
 
     // Emit event
     events::emit_proposal_voted(env, proposal_id, voter, support);
+
+    // Opportunistically emit a state snapshot if enough ledgers have
+    // elapsed since this proposal's last snapshot (#1383).
+    crate::governance::maybe_auto_snapshot(env, proposal_id, &proposal);
 
     Ok(())
 }
