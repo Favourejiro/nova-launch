@@ -237,6 +237,24 @@ export const typeDefs = /* GraphQL */ `
     timestamp: DateTime!
   }
 
+  enum BuybackStepStatus {
+    PENDING
+    COMPLETED
+    FAILED
+  }
+
+  type CampaignStepExecutedEvent {
+    campaignId: Int!
+    stepNumber: Int!
+    amount: String!
+    status: BuybackStepStatus!
+    txHash: String!
+    executedAt: DateTime!
+    totalSteps: Int!
+    executedAmount: String!
+    campaignStatus: CampaignStatus!
+  }
+
   # ── Root Subscription ───────────────────────────────────────────────────────
   #
   # All subscriptions are tenant scoped via the connection JWT. The optional
@@ -256,5 +274,11 @@ export const typeDefs = /* GraphQL */ `
 
     # Emitted when a vesting vault matures. Optionally filter to a recipient.
     vaultMatured(recipientAddress: String): VaultMaturedEvent!
+
+    # Emitted when a buyback campaign step completes on-chain. Optionally
+    # filter to a specific campaign. Unlike the events above, this stream is
+    # not tenant scoped — buyback campaigns are keyed by token address, not
+    # creator — so any authenticated connection receives all matching events.
+    campaignStepExecuted(campaignId: Int): CampaignStepExecutedEvent!
   }
 `;

@@ -3,9 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { param, body, query } from 'express-validator';
 import { validate } from '../middleware/validation';
 import { campaignProjectionService } from '../services/campaignProjectionService';
-import { createRedisClient } from '../middleware/rateLimiter';
-import { acquireStepLock, releaseStepLock } from '../lib/lock';
-import { randomUUID } from 'crypto';
+import { eventBus } from '../services/eventBus';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -272,6 +270,23 @@ router.post(
           },
         },
       });
+
+      // Fire-and-forget: a subscriber error must not roll back the executed step.
+      eventBus
+        .publish('campaign.step_executed', {
+          campaignId: updatedCampaign.id,
+          stepNumber: updatedStep.stepNumber,
+          amount: updatedStep.amount,
+          status: updatedStep.status,
+          txHash: updatedStep.txHash,
+          executedAt: updatedStep.executedAt.toISOString(),
+          totalSteps: updatedCampaign.totalSteps,
+          executedAmount: updatedCampaign.executedAmount,
+          campaignStatus: updatedCampaign.status,
+        })
+        .catch((err) =>
+          console.error('Failed to publish campaign.step_executed event:', err)
+        );
 
       res.json({
         campaign: updatedCampaign,

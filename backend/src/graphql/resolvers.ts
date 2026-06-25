@@ -54,6 +54,7 @@ export const SUBSCRIPTION_TOPICS = {
   burnExecuted: "burn.executed",
   proposalStatusChanged: "governance.proposal.statusChanged",
   vaultMatured: "vault.matured",
+  campaignStepExecuted: "campaign.step_executed",
 } as const;
 
 /**
@@ -106,6 +107,21 @@ export interface VaultMaturedPayload extends TenantScopedPayload {
   amount: string | bigint;
   txHash: string;
   timestamp: string;
+}
+
+/** Buyback campaigns have no creator/tenant field — they're keyed by
+ *  tokenAddress, not by a tenant-owned creator — so this payload is
+ *  intentionally not `TenantScopedPayload`. */
+export interface CampaignStepExecutedPayload {
+  campaignId: number;
+  stepNumber: number;
+  amount: string | bigint;
+  status: string;
+  txHash: string;
+  executedAt: string;
+  totalSteps: number;
+  executedAmount: string | bigint;
+  campaignStatus: string;
 }
 
 /**
@@ -389,6 +405,20 @@ export const resolvers = {
               p.recipientAddress === args.recipientAddress)
         ),
       resolve: (payload: VaultMaturedPayload) => bigintToString(payload),
+    },
+
+    campaignStepExecuted: {
+      subscribe: (
+        _root: unknown,
+        args: { campaignId?: number | null },
+        _ctx: SubscriptionContext
+      ) =>
+        eventBusAsyncIterator<CampaignStepExecutedPayload>(
+          SUBSCRIPTION_TOPICS.campaignStepExecuted,
+          (p) => !args.campaignId || p.campaignId === args.campaignId
+        ),
+      resolve: (payload: CampaignStepExecutedPayload) =>
+        bigintToString(payload),
     },
   },
 
