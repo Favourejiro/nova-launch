@@ -162,6 +162,28 @@ const schemas = {
       timestamp: { type: "string", format: "date-time" },
     },
   },
+
+  DeadLetterEntry: {
+    type: "object",
+    description:
+      "A webhook delivery that exhausted all retry attempts and was routed to the dead-letter store.",
+    properties: {
+      id: { type: "string" },
+      subscriptionId: { type: "string" },
+      event: {
+        type: "string",
+        enum: ["token.burn.self", "token.burn.admin", "token.created", "token.metadata.updated"],
+      },
+      payload: { type: "string", description: "JSON-stringified original webhook payload" },
+      statusCode: { type: "integer", nullable: true },
+      lastError: { type: "string", nullable: true },
+      attemptCount: { type: "integer", description: "Attempts made before exhaustion (pre-retry)" },
+      createdAt: { type: "string", format: "date-time" },
+      updatedAt: { type: "string", format: "date-time" },
+      resolvedAt: { type: "string", format: "date-time", nullable: true },
+      resolution: { type: "string", enum: ["retried", "skipped", "archived"], nullable: true },
+    },
+  },
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -683,6 +705,85 @@ const paths: OpenAPIObject["paths"] = {
       responses: { "200": { description: "Test result" } },
     },
   },
+
+  // Webhook dead-letter queue (admin-only)
+  "/api/webhooks/dead-letter": {
+    get: {
+      tags: ["Webhooks"],
+      summary: "List webhook dead-letter entries (admin only)",
+      description:
+        "Paginated list of failed webhook deliveries that exhausted all retries, across all subscriptions. " +
+        "Supports filtering by tenant (the subscription owner's `createdBy` address — the closest existing field " +
+        "to a tenant identifier in this codebase) and by failure reason (substring match on the last error message).",
+      security: [{ BearerAuth: [] }],
+      parameters: [
+        { $ref: "#/components/parameters/PageParam" },
+        { $ref: "#/components/parameters/LimitParam" },
+        { name: "tenant", in: "query", schema: { type: "string" }, description: "Filter by subscription owner (created_by) address" },
+        { name: "failureReason", in: "query", schema: { type: "string" }, description: "Substring match against the last recorded error message" },
+        { name: "resolved", in: "query", schema: { type: "string", enum: ["true", "false"] }, description: "Filter by resolution status" },
+      ],
+      responses: {
+        "200": {
+          description: "Paginated dead-letter entries",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  success: { type: "boolean" },
+                  data: {
+                    type: "object",
+                    properties: {
+                      entries: { type: "array", items: { $ref: "#/components/schemas/DeadLetterEntry" } },
+                      pagination: { $ref: "#/components/schemas/Pagination" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        "400": { description: "Invalid query parameters", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        "401": { description: "Authentication required" },
+        "403": { description: "Admin access required" },
+      },
+    },
+  },
+  "/api/webhooks/dead-letter/{id}/retry": {
+    post: {
+      tags: ["Webhooks"],
+      summary: "Retry a dead-lettered delivery (admin only)",
+      description:
+        "Re-enqueues the original payload for delivery with a fresh attempt counter (does not resume the " +
+        "exhausted counter that originally routed the entry to the dead-letter queue). Writes an audit log entry.",
+      security: [{ BearerAuth: [] }],
+      parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+      responses: {
+        "200": { description: "Entry re-enqueued for delivery" },
+        "401": { description: "Authentication required" },
+        "403": { description: "Admin access required" },
+        "404": { description: "Dead-letter entry or associated subscription not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        "409": { description: "Entry already resolved", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+      },
+    },
+  },
+  "/api/webhooks/dead-letter/{id}": {
+    delete: {
+      tags: ["Webhooks"],
+      summary: "Discard a dead-lettered delivery (admin only)",
+      description: "Marks the dead-letter entry as archived without retrying delivery. Writes an audit log entry.",
+      security: [{ BearerAuth: [] }],
+      parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+      responses: {
+        "200": { description: "Entry discarded" },
+        "401": { description: "Authentication required" },
+        "403": { description: "Admin access required" },
+        "404": { description: "Dead-letter entry not found", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        "409": { description: "Entry already resolved", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+      },
+    },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -718,6 +819,14 @@ export const openApiSpec: OpenAPIObject = {
   components: {
     schemas: schemas as unknown as OpenAPIObject["components"]["schemas"],
     parameters: parameters as unknown as OpenAPIObject["components"]["parameters"],
+    securitySchemes: {
+      BearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "Admin JWT issued for users with role 'admin' or 'super_admin'.",
+      },
+    },
   },
 };
 

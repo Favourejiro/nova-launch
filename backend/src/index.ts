@@ -19,6 +19,7 @@ import vaultRoutes from "./routes/vaults";
 import versionRoutes from "./routes/version";
 import searchRoutes from "./routes/search";
 import exportRoutes from "./routes/export";
+import webhooksDeadLetterRoutes from "./routes/webhooks-deadletter";
 import graphqlRouter, { attachGraphqlSubscriptions } from "./graphql";
 import openApiRouter from "./lib/openapi/router";
 import { Database } from "./config/database";
@@ -102,6 +103,9 @@ v1Router.use("/vaults", limiter, vaultRoutes);
 v1Router.use("/version", versionRoutes);
 v1Router.use("/search", searchRoutes);
 v1Router.use("/export", exportRoutes);
+// Admin-only dead-letter inspection/retry/discard API — mounted before any
+// broader /webhooks router so its more specific path takes precedence.
+v1Router.use("/webhooks/dead-letter", webhooksDeadLetterRoutes);
 v1Router.use("/graphql", graphqlRouter);
 v1Router.use("/docs", openApiRouter);
 
