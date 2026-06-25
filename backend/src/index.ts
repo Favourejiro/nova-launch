@@ -30,6 +30,7 @@ import { createTimeoutMiddleware } from "./middleware/timeout";
 import { createQueryTimeoutMiddleware } from "./middleware/queryTimeout";
 import { createMetricsMiddleware, metricsRegistry } from "./lib/metrics";
 import { registerPoolMetrics } from "./lib/metrics/poolMetrics";
+import { registerPrismaTracing } from "./lib/metrics/prismaTracing";
 import { prisma } from "./lib/prisma";
 import stellarEventListener from "./services/stellarEventListener";
 import websocketService from "./services/websocket";
@@ -76,6 +77,7 @@ app.use(express.urlencoded({ extended: true }));
 // Initialize database and pool metrics
 Database.initialize();
 registerPoolMetrics(prisma);
+registerPrismaTracing(prisma);
 
 // ---------------------------------------------------------------------------
 // Versioned API router (v1)
