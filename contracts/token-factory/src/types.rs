@@ -693,6 +693,13 @@ pub enum DataKey {
     DistributionClaimed(u32, Address),
     /// Running total of amounts claimed for a distribution
     DistributionClaimedTotal(u32),
+    // Metadata immutability enforcement (#1359)
+    /// Whether the metadata identity lock has been engaged. Set to `true` at the
+    /// end of the first successful `initialize` call. Once set, token identity
+    /// fields (name, symbol, decimals) can never be mutated.
+    MetadataLocked,
+    /// Ledger sequence number recorded when the metadata lock was engaged.
+    MetadataLockedAt,
 }
 
 /// A point-in-time record of a token holder's balance.
@@ -995,6 +1002,11 @@ impl Error {
     pub const DistributionAlreadyClaimed: Self = Self(103);
     pub const DistributionAlreadyReclaimed: Self = Self(104);
     pub const DistributionZeroSupply: Self = Self(105);
+    // Metadata immutability enforcement (#1359)
+    /// Returned when a caller attempts to mutate an immutable identity field
+    /// (name, symbol, decimals) after the factory has been initialized and the
+    /// metadata lock has been engaged.
+    pub const MetadataImmutable: Self = Self(106);
 }
 
 impl From<Error> for soroban_sdk::Error {

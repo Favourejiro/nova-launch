@@ -114,6 +114,38 @@ pub fn set_governance(env: &Env, governance: &Address) {
     env.storage().instance().set(&DataKey::Governance, governance);
 }
 
+// Metadata immutability lock (#1359)
+//
+// Token identity fields (name, symbol, decimals) are immutable for the lifetime
+// of the contract once the lock is engaged. The lock is engaged at the end of
+// the first successful `initialize` call so that buyers can rely on the identity
+// of every token deployed by this factory never changing out from under them.
+
+/// Returns `true` if the metadata identity lock has been engaged.
+pub fn is_metadata_locked(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::MetadataLocked)
+        .unwrap_or(false)
+}
+
+/// Engage the metadata identity lock and record the ledger at which it occurred.
+/// Idempotent: the recorded ledger is only written the first time the lock is set.
+pub fn set_metadata_locked(env: &Env, locked: bool) {
+    env.storage().instance().set(&DataKey::MetadataLocked, &locked);
+    if locked && !env.storage().instance().has(&DataKey::MetadataLockedAt) {
+        let ledger = env.ledger().sequence();
+        env.storage()
+            .instance()
+            .set(&DataKey::MetadataLockedAt, &ledger);
+    }
+}
+
+/// Returns the ledger sequence at which the metadata lock was engaged, if ever.
+pub fn get_metadata_locked_at(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::MetadataLockedAt)
+}
+
 // Fee management
 pub fn get_base_fee(env: &Env) -> i128 {
     env.storage().instance().get(&DataKey::BaseFee).unwrap()

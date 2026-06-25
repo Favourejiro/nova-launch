@@ -222,10 +222,172 @@ impl TokenFactory {
         storage::set_base_fee(&env, base_fee);
         storage::set_metadata_fee(&env, metadata_fee);
 
+        // Engage the metadata immutability lock (#1359). From this point on,
+        // token identity fields (name, symbol, decimals) are permanently
+        // immutable; only the off-chain metadata URI may change, and only via a
+        // governance proposal. The lock ledger is recorded for auditability.
+        storage::set_metadata_locked(&env, true);
+
         // Emit initialized event
         events::emit_initialized(&env, &admin, &treasury, base_fee, metadata_fee);
 
         Ok(())
+    }
+
+    /// Returns `true` if the metadata identity lock is engaged.
+    ///
+    /// The lock is engaged automatically at the end of the first successful
+    /// [`initialize`](Self::initialize) call. While engaged, the immutable
+    /// identity fields of every token — name, symbol, and decimals — can never
+    /// be changed, guaranteeing buyers that a token's identity at purchase time
+    /// is the identity it will always have.
+    pub fn is_metadata_locked(env: Env) -> bool {
+        storage::is_metadata_locked(&env)
+    }
+
+    /// Returns the ledger sequence number at which the metadata lock was
+    /// engaged, or `None` if the factory has not been initialized.
+    pub fn metadata_locked_at(env: Env) -> Option<u32> {
+        storage::get_metadata_locked_at(&env)
+    }
+
+    /// Update a token's immutable identity fields (name, symbol, decimals).
+    ///
+    /// This entry point exists to make the immutability guarantee explicit and
+    /// enforceable. Once the factory has been initialized the metadata lock is
+    /// engaged, so any attempt to mutate these fields returns
+    /// [`Error::MetadataImmutable`]. Identity fields are therefore fixed at the
+    /// moment a token is created and can never be altered afterwards.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `caller` - The token creator (must authorize and match the creator)
+    /// * `token_index` - Index of the token whose identity is being updated
+    /// * `name` - Proposed new token name
+    /// * `symbol` - Proposed new token symbol
+    /// * `decimals` - Proposed new decimal places
+    ///
+    /// # Errors
+    /// * `Error::TokenNotFound` - Token index is invalid
+    /// * `Error::Unauthorized` - Caller is not the token creator
+    /// * `Error::MetadataImmutable` - The metadata lock is engaged (always true
+    ///   after initialization), so identity fields cannot be changed
+    pub fn update_token_identity(
+        env: Env,
+        caller: Address,
+        token_index: u32,
+        name: String,
+        symbol: String,
+        decimals: u32,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+
+        let mut token_info =
+            storage::get_token_info(&env, token_index).ok_or(Error::TokenNotFound)?;
+
+        // Only the token creator could ever have been allowed to change identity.
+        if token_info.creator != caller {
+            return Err(Error::Unauthorized);
+        }
+
+        // Immutable identity fields are locked for the lifetime of the factory.
+        if storage::is_metadata_locked(&env) {
+            return Err(Error::MetadataImmutable);
+        }
+
+        // Reachable only before the lock is engaged (i.e. never in production,
+        // since `initialize` engages the lock). Kept for completeness so the
+        // pre-lock path is exercisable and unambiguous.
+        token_info.name = name;
+        token_info.symbol = symbol;
+        token_info.decimals = decimals;
+        storage::set_token_info(&env, token_index, &token_info);
+        storage::set_token_info_by_address(&env, &token_info.address, &token_info);
+
+        Ok(())
+    }
+
+    /// Update a token's off-chain metadata URI via governance approval.
+    ///
+    /// Unlike the immutable identity fields, the metadata URI (description /
+    /// image_uri) may evolve over a token's lifetime — but only through the
+    /// governance process. This entry point requires authorization from the
+    /// configured governance contract, so an individual creator can no longer
+    /// silently rewrite metadata post-deployment.
+    ///
+    /// The metadata must already have been set once via `set_token_metadata`;
+    /// each successful update increments the version counter and appends a
+    /// history record, preserving a full on-chain audit trail.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `token_index` - Index of the token to update
+    /// * `new_metadata_uri` - New IPFS/Arweave URI for token metadata
+    ///
+    /// # Returns
+    /// Returns `Ok(new_version)` — the incremented version number — on success
+    ///
+    /// # Errors
+    /// * `Error::Unauthorized` - No governance contract is configured
+    /// * `Error::ContractPaused` - Contract is currently paused
+    /// * `Error::TokenNotFound` - Token index is invalid
+    /// * `Error::TokenPaused` - The token is individually paused
+    /// * `Error::MetadataNotSet` - Metadata has never been set
+    /// * `Error::ArithmeticError` - Version counter overflow
+    pub fn governance_update_metadata(
+        env: Env,
+        token_index: u32,
+        new_metadata_uri: String,
+    ) -> Result<u32, Error> {
+        // Only the configured governance contract may approve metadata changes.
+        let governance = storage::get_governance(&env).ok_or(Error::Unauthorized)?;
+        governance.require_auth();
+
+        if storage::is_paused(&env) {
+            return Err(Error::ContractPaused);
+        }
+
+        let mut token_info =
+            storage::get_token_info(&env, token_index).ok_or(Error::TokenNotFound)?;
+
+        if storage::is_token_paused(&env, token_index) {
+            return Err(Error::TokenPaused);
+        }
+
+        if token_info.metadata_uri.is_none() {
+            return Err(Error::MetadataNotSet);
+        }
+
+        let new_version = token_info
+            .metadata_version
+            .checked_add(1)
+            .ok_or(Error::ArithmeticError)?;
+
+        let record = types::MetadataRecord {
+            uri: new_metadata_uri.clone(),
+            updated_at: env.ledger().timestamp(),
+            updated_by: governance.clone(),
+        };
+
+        token_info.metadata_uri = Some(new_metadata_uri.clone());
+        token_info.metadata_version = new_version;
+        storage::set_token_info(&env, token_index, &token_info);
+        storage::set_token_info_by_address(&env, &token_info.address, &token_info);
+
+        env.storage().persistent().set(
+            &types::DataKey::MetadataHistory(token_index, new_version),
+            &record,
+        );
+
+        events::emit_metadata_updated(
+            &env,
+            &token_info.address,
+            &governance,
+            &new_metadata_uri,
+            new_version,
+        );
+
+        Ok(new_version)
     }
 
     /// Set the token used for fee payments (admin only)
@@ -4127,6 +4289,9 @@ mod vault_cancellation_test;
 
 #[cfg(all(test, feature = "legacy-tests"))]
 mod metadata_update_test;
+
+#[cfg(test)]
+mod metadata_immutability_enforcement_test;
 
 // Vault/Stream Security and Fuzz Tests
 // Temporarily disabled - requires fixing timelock/freeze dependencies
