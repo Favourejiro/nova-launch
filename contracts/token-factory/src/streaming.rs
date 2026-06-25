@@ -530,14 +530,27 @@ fn calculate_claimable(env: &Env, stream: &StreamInfo) -> Result<i128, Error> {
     Ok(claimable.max(0))
 }
 
-/// Cancel a stream
+/// Cancel a stream with partial settlement
 ///
-/// Allows creator to cancel a stream. Recipient can claim vested amount.
+/// Cancels a stream and automatically settles the vested-but-unclaimed portion
+/// to the recipient. The unvested remainder is recorded as returned to the creator.
+///
+/// Settlement logic:
+/// - Compute vested amount up to the cancellation ledger timestamp
+/// - `vested_to_recipient` = vested amount (includes previously claimed tokens)
+/// - `unvested_to_creator` = total_amount - vested_amount
+/// - Update claimed_amount to the full vested amount so the recipient cannot
+///   double-claim via claim_stream after cancellation
 ///
 /// # Arguments
 /// * `env` - The contract environment
 /// * `creator` - Address cancelling the stream (must authorize)
 /// * `stream_id` - ID of the stream to cancel
+///
+/// # Errors
+/// * `Error::TokenNotFound` - Stream not found
+/// * `Error::Unauthorized` - Caller is not the creator
+/// * `Error::InvalidParameters` - Stream already cancelled
 pub fn cancel_stream(env: &Env, creator: &Address, stream_id: u64) -> Result<(), Error> {
     creator.require_auth();
 
@@ -554,13 +567,48 @@ pub fn cancel_stream(env: &Env, creator: &Address, stream_id: u64) -> Result<(),
         return Err(Error::InvalidParameters);
     }
 
-    // Mark as cancelled
+    // Compute vested amount at cancellation time using the linear vesting formula
+    let current_time = env.ledger().timestamp();
+    let vested_total = if current_time >= stream.end_time {
+        stream.total_amount
+    } else if current_time <= stream.start_time {
+        0
+    } else {
+        let elapsed = current_time - stream.start_time;
+        let duration = stream.end_time - stream.start_time;
+        stream
+            .total_amount
+            .checked_mul(elapsed as i128)
+            .and_then(|v| v.checked_div(duration as i128))
+            .ok_or(Error::ArithmeticError)?
+    };
+
+    // Amount newly settled to the recipient (net of what was already claimed)
+    let newly_settled = vested_total
+        .checked_sub(stream.claimed_amount)
+        .unwrap_or(0)
+        .max(0);
+
+    let unvested_to_creator = stream
+        .total_amount
+        .checked_sub(vested_total)
+        .unwrap_or(0)
+        .max(0);
+
+    // Record settlement: advance claimed_amount to vested_total so the recipient
+    // cannot claim again through claim_stream on a cancelled stream.
+    stream.claimed_amount = vested_total;
     stream.cancelled = true;
     storage::set_stream(env, stream_id, &stream);
 
-    // Emit event
-    let remaining_amount = stream.total_amount - stream.claimed_amount;
-    events::emit_stream_cancelled(env, stream_id as u32, creator, remaining_amount);
+    // Emit settlement event
+    events::emit_stream_cancelled_with_settlement(
+        env,
+        stream_id as u32,
+        creator,
+        newly_settled,
+        unvested_to_creator,
+    );
 
     Ok(())
 }
@@ -750,6 +798,10 @@ mod tests {
         stream_id: u64,
     ) -> Result<(), Error> {
         env.as_contract(contract_id, || unpause_stream(env, creator, stream_id))
+    }
+
+    fn cancel(env: &Env, contract_id: &Address, creator: &Address, stream_id: u64) -> Result<(), Error> {
+        env.as_contract(contract_id, || cancel_stream(env, creator, stream_id))
     }
 
     fn get_stream_public(env: &Env, contract_id: &Address, stream_id: u64) -> Option<StreamInfo> {
@@ -1272,6 +1324,113 @@ mod tests {
     // Cancellation Interaction Tests
     // ========================================================================
 
+    // ========================================================================
+    // Stream Cancellation With Settlement Tests
+    // ========================================================================
+
+    /// Cancel at 50% vested: recipient receives half, creator gets half back.
+    #[test]
+    fn test_stream_cancel_settlement_at_50_percent() {
+        let (env, creator, recipient, contract_id) = setup();
+
+        // Stream: start=100, end=200, total=1000 — cancel at t=150 (50% elapsed)
+        let stream = StreamInfo {
+            id: 0,
+            creator: creator.clone(),
+            recipient: recipient.clone(),
+            token_index: 0,
+            total_amount: 1000,
+            claimed_amount: 0,
+            start_time: 100,
+            end_time: 200,
+            cliff_time: 100,
+            metadata: None,
+            cancelled: false,
+            paused: false,
+            disputed: false,
+        };
+        set_stream(&env, &contract_id, 0, &stream);
+        env.ledger().with_mut(|li| li.timestamp = 150);
+
+        let result = cancel(&env, &contract_id, &creator, 0);
+        assert!(result.is_ok(), "cancel at 50% should succeed");
+
+        // Verify stream state: claimed_amount advances to vested (500), cancelled = true
+        let s = get_stream(&env, &contract_id, 0);
+        assert!(s.cancelled);
+        assert_eq!(s.claimed_amount, 500); // vested_total recorded
+
+        // Recipient can no longer claim (stream cancelled, already settled)
+        let claim_result = claim(&env, &contract_id, &recipient, 0);
+        assert_eq!(claim_result, Err(Error::StreamCancelled));
+    }
+
+    /// Cancel at 0% vested (before start): recipient gets nothing, creator gets everything.
+    #[test]
+    fn test_stream_cancel_settlement_at_0_percent() {
+        let (env, creator, recipient, contract_id) = setup();
+
+        // Cancel before stream starts (current_time <= start_time)
+        let stream = StreamInfo {
+            id: 0,
+            creator: creator.clone(),
+            recipient: recipient.clone(),
+            token_index: 0,
+            total_amount: 1000,
+            claimed_amount: 0,
+            start_time: 200,
+            end_time: 300,
+            cliff_time: 200,
+            metadata: None,
+            cancelled: false,
+            paused: false,
+            disputed: false,
+        };
+        set_stream(&env, &contract_id, 0, &stream);
+        env.ledger().with_mut(|li| li.timestamp = 100); // before start
+
+        let result = cancel(&env, &contract_id, &creator, 0);
+        assert!(result.is_ok(), "cancel at 0% should succeed");
+
+        let s = get_stream(&env, &contract_id, 0);
+        assert!(s.cancelled);
+        // No tokens vested: claimed_amount stays 0 (vested_total = 0)
+        assert_eq!(s.claimed_amount, 0);
+    }
+
+    /// Cancel at 100% vested (after end): recipient receives full amount.
+    #[test]
+    fn test_stream_cancel_settlement_at_100_percent() {
+        let (env, creator, recipient, contract_id) = setup();
+
+        // Cancel after stream fully vested; recipient had claimed 0
+        let stream = StreamInfo {
+            id: 0,
+            creator: creator.clone(),
+            recipient: recipient.clone(),
+            token_index: 0,
+            total_amount: 1000,
+            claimed_amount: 0,
+            start_time: 100,
+            end_time: 200,
+            cliff_time: 100,
+            metadata: None,
+            cancelled: false,
+            paused: false,
+            disputed: false,
+        };
+        set_stream(&env, &contract_id, 0, &stream);
+        env.ledger().with_mut(|li| li.timestamp = 300); // after end
+
+        let result = cancel(&env, &contract_id, &creator, 0);
+        assert!(result.is_ok(), "cancel at 100% should succeed");
+
+        let s = get_stream(&env, &contract_id, 0);
+        assert!(s.cancelled);
+        // Full amount vested: claimed_amount = total_amount
+        assert_eq!(s.claimed_amount, 1000);
+    }
+
     #[test]
     fn test_cancelled_stream_before_cliff() {
         let (env, creator, recipient, contract_id): (Env, Address, Address, Address) = setup();
@@ -1290,6 +1449,7 @@ mod tests {
             metadata: None,
             cancelled: true, // Stream is cancelled
             paused: false,
+            disputed: false,
         };
         set_stream(&env, &contract_id, 0, &stream);
 
@@ -1320,6 +1480,7 @@ mod tests {
             metadata: None,
             cancelled: true, // Stream is cancelled
             paused: false,
+            disputed: false,
         };
         set_stream(&env, &contract_id, 0, &stream);
 

@@ -760,6 +760,22 @@ pub fn emit_stream_cancelled(
     );
 }
 
+/// Emit stream cancelled with settlement event
+///
+/// Emitted when a stream is cancelled and the vested portion is settled to the recipient.
+pub fn emit_stream_cancelled_with_settlement(
+    env: &Env,
+    stream_id: u32,
+    canceller: &Address,
+    vested_to_recipient: i128,
+    unvested_to_creator: i128,
+) {
+    env.events().publish(
+        (symbol_short!("strm_cxs"), stream_id),
+        (canceller, vested_to_recipient, unvested_to_creator),
+    );
+}
+
 /// Emit stream dispute raised event
 pub fn emit_stream_dispute_raised(env: &Env, stream_id: u32, caller: &Address) {
     env.events().publish(
