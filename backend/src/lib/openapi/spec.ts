@@ -23,12 +23,14 @@ const schemas = {
   Pagination: {
     type: "object",
     properties: {
-      page: { type: "integer", example: 1 },
+      page: { type: "integer", example: 1, deprecated: true, description: "Offset-based page number. Deprecated — prefer `cursor`/`nextCursor`." },
       limit: { type: "integer", example: 20 },
       total: { type: "integer", example: 100 },
-      totalPages: { type: "integer", example: 5 },
-      hasNext: { type: "boolean" },
-      hasPrev: { type: "boolean" },
+      totalPages: { type: "integer", example: 5, deprecated: true },
+      hasNext: { type: "boolean", deprecated: true, description: "Deprecated — prefer `hasMore`." },
+      hasPrev: { type: "boolean", deprecated: true },
+      nextCursor: { type: "string", nullable: true, description: "Opaque cursor for the next page; null when there are no more results." },
+      hasMore: { type: "boolean", description: "Whether another page is available via `nextCursor`." },
     },
   },
 
@@ -292,7 +294,8 @@ const paths: OpenAPIObject["paths"] = {
         { name: "hasBurns", in: "query", schema: { type: "string", enum: ["true", "false"] } },
         { name: "sortBy", in: "query", schema: { type: "string", enum: ["created", "burned", "supply", "name"], default: "created" } },
         { name: "sortOrder", in: "query", schema: { type: "string", enum: ["asc", "desc"], default: "desc" } },
-        { name: "page", in: "query", schema: { type: "integer", default: 1 } },
+        { name: "cursor", in: "query", schema: { type: "string" }, description: "Opaque keyset cursor from a previous response's `pagination.nextCursor`. Only supported when sortBy=created; takes precedence over `page`." },
+        { name: "page", in: "query", schema: { type: "integer", default: 1 }, deprecated: true, description: "Offset-based page number. Deprecated in favor of `cursor` — inconsistent results may occur when new tokens are deployed between page fetches." },
         { name: "limit", in: "query", schema: { type: "integer", default: 20, maximum: 50 } },
       ],
       responses: {
