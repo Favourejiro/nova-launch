@@ -25,7 +25,8 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json}\"",
     "type-check": "tsc --noEmit",
     "docs:generate": "tsx scripts/generate-openapi.ts && tsx scripts/generate-docs.ts",
-    "incident:test": "vitest run --config ../monitoring/pagerduty/vitest.config.ts ../monitoring/pagerduty/incident-response.test.ts"
+    "incident:test": "vitest run --config ../monitoring/pagerduty/vitest.config.ts ../monitoring/pagerduty/incident-response.test.ts",
+    "test:update-snapshots": "vitest run src/__tests__/governanceEventParser.snapshot.test.ts --update-snapshots"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",
