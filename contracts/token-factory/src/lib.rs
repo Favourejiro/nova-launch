@@ -136,7 +136,10 @@ const _ISOLATED_DISABLED_burn_schedule_test: () = ();
 #[cfg(test)]
 const _ISOLATED_DISABLED_burn_edge_cases_test: () = ();
 #[cfg(test)]
-const _ISOLATED_DISABLED_dividend_distribution_test: () = ();
+mod dividend_distribution_test;
+#[cfg(test)]
+mod dividend_distribution_multi_epoch_integration_test;
+
 #[cfg(test)]
 const _ISOLATED_DISABLED_metadata_versioning_property_test: () = ();
 #[cfg(test)]
