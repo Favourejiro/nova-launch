@@ -10,15 +10,53 @@
  *  - Depth limit: rejects queries nested deeper than MAX_DEPTH (default 6,
  *    configurable via GRAPHQL_MAX_DEPTH env var)
  *  - Complexity limit: rejects queries whose cost score exceeds MAX_COMPLEXITY
- *    (default 100, configurable via GRAPHQL_MAX_COMPLEXITY env var). List
- *    fields are scored at LIST_FIELD_COST (default 10) to account for fan-out;
- *    scalar/object fields cost 1 each.
+ *    (default 100, configurable via GRAPHQL_MAX_COMPLEXITY env var). Scoring
+ *    is computed with the `graphql-query-complexity` library using
+ *    `simpleEstimator({ defaultComplexity: 1 })` (every scalar/object field
+ *    costs 1) plus a custom estimator that scores fields in LIST_FIELDS at
+ *    LIST_FIELD_COST (default 10, configurable via GRAPHQL_LIST_FIELD_COST)
+ *    to account for N-row fan-out, summed with child complexity per level.
+ *    This guards against N+1 resolver abuse from deeply nested list queries.
+ *    Queries over budget are rejected with HTTP 400 and a `QUERY_TOO_COMPLEX`
+ *    error code in `errors[0].extensions.code`. The computed score is always
+ *    echoed back in the top-level response `extensions.complexity` /
+ *    `extensions.maxComplexity`, on both accepted and rejected queries, to
+ *    aid client-side debugging.
  *  - No mutations exposed — all writes go through the existing REST layer
  *  - Rate limiting is inherited from the global Express rate limiter in index.ts
+ *
+ * Example complexity scores (budget 100, LIST_FIELD_COST 10) computed by the
+ * estimator below, against the schema in `./schema.ts`:
+ *
+ *   query { tokens(limit: 10) { id address name symbol } }
+ *     -> 14  (10 for `tokens` + 4 scalar selections, accepted)
+ *
+ *   query { token(address: "x") { id address name } }
+ *     -> 4   (non-list field, 1 per scalar selection, accepted)
+ *
+ *   query {
+ *     tokens(limit: 10) {
+ *       id name
+ *       burnRecords(limit: 10) { id amount }
+ *     }
+ *   }
+ *     -> 24  (10 for `tokens` + 2 scalars + 10 for nested `burnRecords` + 2
+ *             scalars, accepted)
+ *
+ *   query {
+ *     a: tokens { burnRecords { id } }
+ *     b: tokens { burnRecords { id } }
+ *     c: tokens { burnRecords { id } }
+ *     d: tokens { burnRecords { id } }
+ *     e: tokens { burnRecords { id } }
+ *   }
+ *     -> 105 (5 aliased `tokens -> burnRecords` trees at 21 each, REJECTED:
+ *             exceeds the 100 budget with QUERY_TOO_COMPLEX)
  */
 
 import { Router } from "express";
 import { createHandler } from "graphql-http/lib/use/express";
+import type { Response as GraphqlHttpResponse } from "graphql-http";
 import {
   buildSchema,
   execute,
@@ -28,6 +66,11 @@ import {
   parse,
   validate,
 } from "graphql";
+import {
+  getComplexity,
+  simpleEstimator,
+  type ComplexityEstimator,
+} from "graphql-query-complexity";
 import { WebSocketServer } from "ws";
 import { useServer } from "graphql-ws/lib/use/ws";
 import type { Server } from "http";
@@ -72,23 +115,15 @@ function maxQueryDepth(node: any, depth = 0): number {
 }
 
 /**
- * Recursively compute a cost score for a selection set node.
- * Each field costs 1; list fields cost LIST_FIELD_COST to account for N-row
- * fan-out. The cost accumulates across all nested selections.
+ * Custom `graphql-query-complexity` estimator: fields in LIST_FIELDS are
+ * scored at LIST_FIELD_COST plus the complexity of their child selections,
+ * to account for the N-row fan-out that nested list fields incur (the N+1
+ * resolver pattern this whole module guards against). Returning `undefined`
+ * defers to the next estimator in the chain (`simpleEstimator`), which scores
+ * every other field at 1.
  */
-function queryComplexity(node: any): number {
-  if (!node || typeof node !== "object") return 0;
-  if (!node.selectionSet?.selections) return 1;
-
-  let cost = 0;
-  for (const selection of node.selectionSet.selections) {
-    const fieldName: string | undefined = selection.name?.value;
-    const fieldCost =
-      fieldName && LIST_FIELDS.has(fieldName) ? LIST_FIELD_COST : 1;
-    cost += fieldCost + queryComplexity(selection);
-  }
-  return cost;
-}
+const listFieldEstimator: ComplexityEstimator = ({ field, childComplexity }) =>
+  LIST_FIELDS.has(field.name) ? LIST_FIELD_COST + childComplexity : undefined;
 
 export const schema = buildSchema(typeDefs);
 
@@ -245,12 +280,53 @@ export function attachGraphqlSubscriptions(
 
 const router = Router();
 
+/**
+ * Tracks the computed complexity score for the in-flight request so it can
+ * be attached to the response `extensions` from `onOperation`, which runs
+ * after `onSubscribe` but doesn't have direct access to the score otherwise.
+ * Keyed by the `graphql-http` request object reference, which is identical
+ * across both hooks for a single HTTP call; entries are removed once read so
+ * the map can't grow unbounded.
+ */
+const complexityByRequest = new WeakMap<object, number>();
+
+/** Builds the `400 Bad Request` response body/init tuple graphql-http expects
+ *  when returned directly from `onSubscribe`, guaranteeing the HTTP status is
+ *  400 regardless of the request's `Accept` header (unlike returning a plain
+ *  `GraphQLError[]`, whose status depends on content negotiation). */
+function tooComplexResponse(
+  complexity: number,
+  maxComplexity: number
+): GraphqlHttpResponse {
+  const message = `Query complexity ${complexity} exceeds maximum allowed budget of ${maxComplexity}`;
+  return [
+    JSON.stringify({
+      errors: [
+        {
+          message,
+          extensions: {
+            code: "QUERY_TOO_COMPLEX",
+            complexity,
+            maxComplexity,
+          },
+        },
+      ],
+      extensions: { complexity, maxComplexity },
+    }),
+    {
+      status: 400,
+      statusText: "Bad Request",
+      headers: { "content-type": "application/json; charset=utf-8" },
+    },
+  ];
+}
+
 router.all(
   "/",
   createHandler({
     schema,
     rootValue,
-    onSubscribe(_req, params) {
+    onSubscribe(req, params) {
       // Disable introspection in production
       if (
         process.env.NODE_ENV === "production" &&
@@ -277,23 +353,44 @@ router.all(
             ];
           }
 
-          const complexity = doc.definitions.reduce(
-            (sum: number, def: any) => sum + queryComplexity(def),
-            0
-          );
+          const complexity = getComplexity({
+            schema,
+            query: doc,
+            operationName: params.operationName ?? undefined,
+            variables: (params.variables as Record<string, unknown>) ?? {},
+            estimators: [
+              listFieldEstimator,
+              simpleEstimator({ defaultComplexity: 1 }),
+            ],
+          });
+
           if (complexity > MAX_COMPLEXITY) {
-            return [
-              new GraphQLError(
-                `Query complexity ${complexity} exceeds maximum allowed budget of ${MAX_COMPLEXITY}`
-              ),
-            ];
+            return tooComplexResponse(complexity, MAX_COMPLEXITY);
           }
+
+          // Stash the score so onOperation can echo it back in `extensions`
+          // for accepted queries too.
+          complexityByRequest.set(req, complexity);
         } catch {
           return [new GraphQLError("Failed to parse query")];
         }
       }
 
       return undefined;
+    },
+    onOperation(req, _args, result) {
+      const complexity = complexityByRequest.get(req);
+      if (complexity === undefined) return undefined;
+      complexityByRequest.delete(req);
+
+      return {
+        ...result,
+        extensions: {
+          ...result.extensions,
+          complexity,
+          maxComplexity: MAX_COMPLEXITY,
+        },
+      };
     },
   })
 );
