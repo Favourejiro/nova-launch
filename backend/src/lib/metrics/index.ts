@@ -372,6 +372,27 @@ export const webhookDeliveryLatency = new Histogram({
   registers: [register],
 });
 
+/**
+ * Configured concurrency of the webhook delivery worker pool
+ * (WEBHOOK_WORKER_CONCURRENCY). Reported as a gauge so it shows up
+ * alongside live queue depth even though it rarely changes at runtime.
+ */
+export const webhookDeliveryWorkerPoolSize = new Gauge({
+  name: "webhook_delivery_worker_pool_size",
+  help: "Configured concurrency of the webhook delivery worker pool",
+  registers: [register],
+});
+
+/**
+ * Number of webhook deliveries currently waiting for a free worker slot
+ * in the delivery pool (i.e. not yet dispatched).
+ */
+export const webhookDeliveryQueueDepth = new Gauge({
+  name: "webhook_delivery_queue_depth",
+  help: "Current number of queued webhook deliveries awaiting a free worker slot",
+  registers: [register],
+});
+
 // ---------------------------------------------------------------------------
 // Background Job Metrics
 // ---------------------------------------------------------------------------
@@ -608,6 +629,11 @@ export class MetricsCollector {
 
   static updateJobQueueSize(queueName: string, size: number): void {
     jobQueueSize.set({ queue_name: queueName }, size);
+  }
+
+  static updateWebhookWorkerPool(poolSize: number, queueDepth: number): void {
+    webhookDeliveryWorkerPoolSize.set(poolSize);
+    webhookDeliveryQueueDepth.set(queueDepth);
   }
 
   static updateErrorRate(component: string, rate: number): void {
