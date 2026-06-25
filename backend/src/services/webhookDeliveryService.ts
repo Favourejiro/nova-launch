@@ -12,6 +12,9 @@ import webhookDeadLetterService from "./webhookDeadLetterService";
 import { IntegrationMetrics } from "../monitoring/metrics/prometheus-config";
 import { webhookDeliveryLatency } from "../lib/metrics";
 import { CircuitBreaker } from "../lib/circuitBreaker";
+import tenantWebhookRateLimiter, {
+  TenantWebhookRateLimiter,
+} from "./tenantWebhookRateLimiter";
 
 const gzipAsync = promisify(gzip);
 
@@ -23,8 +26,12 @@ export class WebhookDeliveryService {
   private circuitBreaker: CircuitBreaker;
   // Read at construction time so tests can override via process.env before new WebhookDeliveryService()
   private readonly compressionThresholdBytes: number;
+  // Per-tenant token-bucket rate limiter gating outbound delivery. Defaults
+  // to the shared singleton so all callers in the process share state, but
+  // can be overridden (e.g. in tests) via the constructor.
+  private readonly rateLimiter: TenantWebhookRateLimiter;
 
-  constructor() {
+  constructor(rateLimiter: TenantWebhookRateLimiter = tenantWebhookRateLimiter) {
     this.circuitBreaker = new CircuitBreaker({
       failureThreshold: parseInt(process.env.WEBHOOK_CIRCUIT_BREAKER_FAILURE_THRESHOLD || "5"),
       successThreshold: parseInt(process.env.WEBHOOK_CIRCUIT_BREAKER_SUCCESS_THRESHOLD || "2"),
@@ -34,6 +41,21 @@ export class WebhookDeliveryService {
     this.compressionThresholdBytes = parseInt(
       process.env.WEBHOOK_COMPRESSION_THRESHOLD_BYTES || "1024"
     );
+    this.rateLimiter = rateLimiter;
+  }
+
+  /**
+   * Resolve the rate-limiter "tenant" key for a subscription.
+   *
+   * There is no dedicated tenant/org column on webhook subscriptions in
+   * this codebase (see `types/webhook.ts` / `services/webhookService.ts`) —
+   * `createdBy` (the address that registered the subscription) is the
+   * closest existing identifier scoping a subscription to one account, so
+   * it is used as the tenant key. Centralizing the lookup here means a
+   * future real tenant/org concept only requires changing this one method.
+   */
+  private getTenantId(subscription: WebhookSubscription): string {
+    return subscription.createdBy;
   }
   /**
    * Trigger webhooks for an event
@@ -86,6 +108,13 @@ export class WebhookDeliveryService {
     // Include originating tx hash if present in data
     const txHash = (data as unknown as Record<string, unknown>).transactionHash as string | undefined;
     if (txHash) extraHeaders['X-Tx-Hash'] = txHash;
+
+    // Per-tenant token-bucket rate limiting gate — applied BEFORE any
+    // outbound HTTP call. If the tenant is within budget this resolves
+    // immediately; otherwise the delivery is queued (never dropped) and
+    // resolves once a token refills (see TenantWebhookRateLimiter).
+    const tenantId = this.getTenantId(subscription);
+    await this.rateLimiter.acquire(tenantId);
 
     return this.circuitBreaker.execute(async () => {
       let lastError: string | null = null;
