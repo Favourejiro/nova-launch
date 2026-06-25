@@ -80,8 +80,8 @@ pub fn pause_campaign(env: &Env, caller: &Address, campaign_id: u64) -> Result<(
             return Err(Error::CampaignCancelled);
         }
         CampaignStatus::Expired => {
-            // Terminal state: cannot pause an expired campaign
-            return Err(Error::CampaignCompleted);
+            // Terminal state: cannot pause expired campaign
+            return Err(Error::CampaignExpiredError);
         }
     }
 
@@ -151,8 +151,8 @@ pub fn resume_campaign(env: &Env, caller: &Address, campaign_id: u64) -> Result<
             return Err(Error::CampaignCancelled);
         }
         CampaignStatus::Expired => {
-            // Terminal state: cannot resume an expired campaign
-            return Err(Error::CampaignCompleted);
+            // Terminal state: cannot resume expired campaign
+            return Err(Error::CampaignExpiredError);
         }
     }
 

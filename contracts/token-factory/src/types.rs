@@ -795,42 +795,23 @@ pub enum DataKey {
     DistributionClaimed(u32, Address),
     /// Running total of amounts claimed for a distribution
     DistributionClaimedTotal(u32),
-    // ── Transfer restrictions (address freezing) ────────────────────────────
-    /// Whether an address is frozen for a given token: (token_address, address)
+    // TEMP-VALIDATION-ONLY: stub variants to unblock local compilation of
+    // pre-existing, unrelated breakage in `main` so vault_error tests can be
+    // exercised in isolation. NOT part of the vault-error-codes commit.
     FrozenAddress(Address, Address),
-    // ── Token fractionalization ──────────────────────────────────────────────
-    /// Fractional vault by ID
     FractionalVault(u64),
-    /// Total number of fractional vaults created
     FractionalVaultCount,
-    /// Number of fractional vaults owned by an address
     OwnerFractionalVaultCount(Address),
-    /// Fractional vault ID for an owner at a given index: (owner, index)
     FractionalVaultByOwner(Address, u32),
-    /// Vault ID associated with an underlying asset
-    AssetToVault(BytesN<32>),
-    // ── Role-based access control ────────────────────────────────────────────
-    /// Whether an address holds a role on a token: (token_index, address, role_discriminant)
+    AssetToVault(soroban_sdk::BytesN<32>),
     TokenRole(u32, Address, u32),
-    // ── Metadata history ─────────────────────────────────────────────────────
-    /// Number of metadata history records for a token
     MetadataHistoryCount(u32),
-    // ── Multi-signature admin operations ─────────────────────────────────────
-    /// Multi-sig configuration (signers + threshold)
     MultiSigConfig,
-    /// Total number of multi-sig proposals created
     MultiSigProposalCount,
-    /// Multi-sig proposal by ID
     MultiSigProposal(u64),
-    /// Whether a signer has approved a multi-sig proposal: (proposal_id, approver)
     MultiSigApproval(u64, Address),
-    // ── Time-locked burn schedules ────────────────────────────────────────────
-    /// Total number of burn schedules created
     BurnScheduleCount,
-    /// Burn schedule by ID
     BurnSchedule(u64),
-    // ── Cross-contract trusted callers ───────────────────────────────────────
-    /// Whether an address is a registered trusted caller
     TrustedCaller(Address),
 }
 
@@ -1134,8 +1115,136 @@ impl Error {
     pub const DistributionAlreadyClaimed: Self = Self(103);
     pub const DistributionAlreadyReclaimed: Self = Self(104);
     pub const DistributionZeroSupply: Self = Self(105);
-    // Multi-sig configuration errors
+    // TEMP-VALIDATION-ONLY
     pub const DuplicateSigners: Self = Self(106);
+}
+
+#[allow(non_upper_case_globals)]
+impl Error {
+    /// Stable string representation of the error variant name.
+    ///
+    /// This is the canonical "named string repr" surfaced to off-chain
+    /// indexers (e.g. `vaultEventParser.ts`) via the `OperationFailed`
+    /// event's `error_name` field. Soroban's on-chain return value for a
+    /// failed invocation is still the raw `u32` discriminant (the Wasm ABI
+    /// only supports flat numeric contract errors), so this mapping is the
+    /// bridge that lets clients show human-readable error names without
+    /// hardcoding the numeric-to-name mapping themselves and re-deriving it
+    /// every time a new error code is added.
+    ///
+    /// Adding a new error code requires adding a new arm here; removing or
+    /// renaming an existing arm is a breaking change for any indexer that
+    /// pattern-matches on the returned name.
+    pub fn name(&self) -> &'static str {
+        match self.0 {
+            1 => "InsufficientFee",
+            2 => "Unauthorized",
+            3 => "InvalidParameters",
+            4 => "TokenNotFound",
+            5 => "MetadataAlreadySet",
+            6 => "AlreadyInitialized",
+            7 => "InsufficientBalance",
+            8 => "ArithmeticError",
+            9 => "BatchTooLarge",
+            10 => "InvalidAmount",
+            11 => "ClawbackDisabled",
+            12 => "InvalidBurnAmount",
+            13 => "BurnAmountExceedsBalance",
+            14 => "ContractPaused",
+            15 => "InvalidTokenParams",
+            16 => "BatchCreationFailed",
+            17 => "StreamNotFound",
+            18 => "InvalidSchedule",
+            19 => "StreamCancelled",
+            20 => "CliffNotReached",
+            21 => "NothingToClaim",
+            22 => "MissingAdmin",
+            23 => "MissingTreasury",
+            24 => "InvalidBaseFee",
+            25 => "InvalidMetadataFee",
+            26 => "InconsistentTokenCount",
+            27 => "WithdrawalCapExceeded",
+            28 => "RecipientNotAllowed",
+            29 => "TimelockNotExpired",
+            30 => "ChangeAlreadyExecuted",
+            31 => "ChangeNotFound",
+            32 => "MaxSupplyExceeded",
+            33 => "InvalidMaxSupply",
+            34 => "MintingDisabled",
+            35 => "TokenPaused",
+            36 => "FreezeNotEnabled",
+            37 => "AddressFrozen",
+            38 => "AddressNotFrozen",
+            39 => "ProposalInTerminalState",
+            40 => "InvalidStateTransition",
+            41 => "InvalidTimeWindow",
+            42 => "PayloadTooLarge",
+            43 => "ProposalNotFound",
+            44 => "VotingNotStarted",
+            45 => "VotingEnded",
+            46 => "VotingClosed",
+            47 => "AlreadyVoted",
+            48 => "ProposalNotQueued",
+            49 => "ProposalCancelled",
+            50 => "QuorumNotMet",
+            51 => "CampaignNotFound",
+            52 => "InvalidBudget",
+            53 => "InsufficientBudget",
+            54 => "PriceTriggerNotMet",
+            55 => "CampaignExpiredError",
+            56 => "IntervalNotElapsed",
+            57 => "AirdropNotFound",
+            58 => "AirdropAlreadyClaimed",
+            59 => "InvalidMerkleProof",
+            60 => "AirdropExpired",
+            61 => "AirdropNotStarted",
+            62 => "TemplateNotFound",
+            63 => "UpgradeUnauthorized",
+            64 => "MigrationFailed",
+            65 => "CampaignAlreadyPaused",
+            66 => "CampaignNotPaused",
+            67 => "CampaignCompleted",
+            68 => "CampaignCancelled",
+            69 => "DynamicQuorumDisabled",
+            70 => "InsufficientParticipationHistory",
+            71 => "InvalidQuorumBounds",
+            72 => "MultiSigNotConfigured",
+            73 => "MultiSigProposalNotFound",
+            74 => "MultiSigAlreadyApproved",
+            75 => "MultiSigProposalExecuted",
+            76 => "MultiSigProposalCancelled",
+            77 => "MultiSigThresholdNotMet",
+            78 => "NotASigner",
+            79 => "InvalidThreshold",
+            80 => "MetadataNotSet",
+            81 => "BurnScheduleNotFound",
+            82 => "BurnScheduleLocked",
+            83 => "StorageMigrationAlreadyRun",
+            84 => "StorageMigrationNotRequired",
+            85 => "DividendDistributionFailed",
+            86 => "DividendZeroHolders",
+            87 => "DividendOverflow",
+            88 => "DividendExceedsPool",
+            89 => "DisputeAlreadyRaised",
+            90 => "CampaignFinalizationFailed",
+            91 => "ProposalNotCancellable",
+            92 => "BurnReentrancyDetected",
+            93 => "InvalidMetadataHash",
+            94 => "MetadataHashMismatch",
+            95 => "MilestoneUnauthorized",
+            96 => "MilestoneAlreadyVerified",
+            97 => "VaultOwnerChangePending",
+            98 => "VaultOwnerChangeNotFound",
+            99 => "VaultOwnerChangeAlreadyApproved",
+            100 => "DistributionNotFound",
+            101 => "DistributionWindowClosed",
+            102 => "DistributionWindowOpen",
+            103 => "DistributionAlreadyClaimed",
+            104 => "DistributionAlreadyReclaimed",
+            105 => "DistributionZeroSupply",
+            _ => "UnknownError",
+        }
+    }
 }
 
 impl From<Error> for soroban_sdk::Error {

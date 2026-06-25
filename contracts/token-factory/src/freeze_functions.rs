@@ -61,7 +61,7 @@ pub fn freeze_address(
 
     // Verify freeze is enabled for this token
     if !token_info.freeze_enabled {
-        events::emit_error_detail(env, Error::Unauthorized.0, 0); // freeze not enabled
+        events::emit_error_detail(env, Error::Unauthorized.0, 0);
         return Err(Error::Unauthorized);
     }
 
@@ -147,7 +147,7 @@ pub fn unfreeze_address(
 
     // Verify freeze is enabled for this token
     if !token_info.freeze_enabled {
-        events::emit_error_detail(env, Error::Unauthorized.0, 0); // freeze not enabled
+        events::emit_error_detail(env, Error::Unauthorized.0, 0);
         return Err(Error::Unauthorized);
     }
 

@@ -138,7 +138,7 @@ impl<'a> ProposalBuilder<'a> {
             ActionType::PauseContract | ActionType::UnpauseContract => pause_payload(self.env),
             ActionType::TreasuryChange => treasury_change_payload(self.env, &Address::generate(self.env)),
             ActionType::PolicyUpdate => policy_update_payload(self.env, 100_0000000, true, 86400),
-            ActionType::ParameterChange => Bytes::new(self.env),
+            ActionType::ParameterChange => fee_change_payload(self.env, 2_000_000, 750_000),
         };
         self
     }
@@ -237,13 +237,8 @@ impl<'a> EventAssertions<'a> {
         Self { env }
     }
 
-    /// Returns the number of contract events published so far.
-    ///
-    /// `Events::all()` returns a `ContractEvents` struct in this SDK version
-    /// (no longer a plain `Vec<(Address, Vec<Val>, Val)>`), so callers that
-    /// need the raw old-style tuples should use `count`/`assert_*` instead.
-    pub fn all(&self) -> usize {
-        self.env.events().all().events().len()
+    pub fn all(&self) -> std::vec::Vec<soroban_sdk::xdr::ContractEvent> {
+        self.env.events().all().events().to_vec()
     }
 
     pub fn assert_exists(&self, name: &str) {
@@ -267,14 +262,14 @@ impl<'a> EventAssertions<'a> {
     }
 
     fn count(&self, name: &str) -> usize {
-        let target = Symbol::new(self.env, name);
         let mut n = 0usize;
-        let events = self.env.events().all();
-        for evt in events.events() {
-            let soroban_sdk::xdr::ContractEventBody::V0(body) = &evt.body;
-            if let Some(first) = body.topics.first() {
-                if let Ok(sym) = Symbol::try_from_val(self.env, first) {
-                    if sym == target {
+        for evt in self.env.events().all().events() {
+            let topics = match &evt.body {
+                soroban_sdk::xdr::ContractEventBody::V0(v0) => &v0.topics,
+            };
+            if let Some(first) = topics.get(0) {
+                if let soroban_sdk::xdr::ScVal::Symbol(sym) = first {
+                    if sym.0.to_utf8_string().as_deref() == Ok(name) {
                         n += 1;
                     }
                 }

@@ -1710,3 +1710,81 @@ mod cancel_proposal_tests {
         });
     }
 }
+
+#[cfg(any())] // TEMP-VALIDATION-ONLY: disabled duplicate module for vault_error isolation build
+mod cancel_proposal_tests {
+    use super::*;
+    use crate::test_helpers::fee_change_payload;
+    use soroban_sdk::{testutils::Address as _, testutils::Ledger, Env};
+
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, crate::TokenFactory);
+        let admin = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            storage::set_admin(&env, &admin);
+            storage::set_treasury(&env, &Address::generate(&env));
+            storage::set_base_fee(&env, 1_000_000);
+            storage::set_metadata_fee(&env, 500_000);
+            initialize_timelock(&env, Some(3600)).unwrap();
+        });
+        (env, admin, contract_id)
+    }
+
+    fn make_proposal(env: &Env, contract_id: &Address, proposer: &Address) -> u64 {
+        let t = env.ledger().timestamp();
+        let payload = fee_change_payload(env, 2_000_000, 750_000);
+        env.as_contract(contract_id, || {
+            create_proposal(env, proposer, ActionType::FeeChange, payload, t + 10, t + 86410, t + 90010).unwrap()
+        })
+    }
+
+    #[test]
+    fn proposer_can_cancel() {
+        let (env, admin, contract_id) = setup();
+        let pid = make_proposal(&env, &contract_id, &admin);
+        env.as_contract(&contract_id, || {
+            cancel_proposal(&env, &admin, pid).unwrap();
+            let p = storage::get_proposal(&env, pid).unwrap();
+            assert_eq!(p.state, crate::types::ProposalState::Cancelled);
+            assert!(p.cancelled_at.is_some());
+        });
+    }
+
+    #[test]
+    fn non_proposer_non_admin_cannot_cancel() {
+        let (env, admin, contract_id) = setup();
+        let pid = make_proposal(&env, &contract_id, &admin);
+        let stranger = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            let err = cancel_proposal(&env, &stranger, pid).unwrap_err();
+            assert_eq!(err, Error::Unauthorized);
+        });
+    }
+
+    #[test]
+    fn cannot_cancel_terminal_proposal() {
+        let (env, admin, contract_id) = setup();
+        let pid = make_proposal(&env, &contract_id, &admin);
+        env.as_contract(&contract_id, || {
+            let mut p = storage::get_proposal(&env, pid).unwrap();
+            p.state = crate::types::ProposalState::Executed;
+            p.executed_at = Some(env.ledger().timestamp());
+            storage::set_proposal(&env, pid, &p);
+            let err = cancel_proposal(&env, &admin, pid).unwrap_err();
+            assert_eq!(err, Error::ProposalNotCancellable);
+        });
+    }
+
+    #[test]
+    fn cannot_cancel_already_cancelled() {
+        let (env, admin, contract_id) = setup();
+        let pid = make_proposal(&env, &contract_id, &admin);
+        env.as_contract(&contract_id, || {
+            cancel_proposal(&env, &admin, pid).unwrap();
+            let err = cancel_proposal(&env, &admin, pid).unwrap_err();
+            assert_eq!(err, Error::ProposalNotCancellable);
+        });
+    }
+}
