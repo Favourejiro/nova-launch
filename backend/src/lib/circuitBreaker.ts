@@ -30,6 +30,8 @@ export interface CircuitBreakerOptions {
   successThreshold: number;
   /** Time in milliseconds to wait before trying half-open */
   timeoutMs: number;
+  /** Optional callback invoked on every state transition */
+  onStateChange?: (newState: CircuitBreakerState, prevState: CircuitBreakerState) => void;
 }
 
 export type CircuitBreakerState = 'closed' | 'open' | 'half-open';
@@ -105,11 +107,19 @@ export class CircuitBreaker {
     this.lastFailureTime = 0;
   }
 
+  private transition(newState: CircuitBreakerState): void {
+    const prev = this.state;
+    this.state = newState;
+    if (prev !== newState) {
+      this.options.onStateChange?.(newState, prev);
+    }
+  }
+
   private checkState(): void {
     if (this.state === 'open') {
       if (Date.now() - this.lastFailureTime >= this.options.timeoutMs) {
-        this.state = 'half-open';
         this.successCount = 0;
+        this.transition('half-open');
       } else {
         throw new CircuitBreakerOpenError();
       }
@@ -121,8 +131,8 @@ export class CircuitBreaker {
     if (this.state === 'half-open') {
       this.successCount++;
       if (this.successCount >= this.options.successThreshold) {
-        this.state = 'closed';
         this.successCount = 0;
+        this.transition('closed');
       }
     }
   }
@@ -131,7 +141,7 @@ export class CircuitBreaker {
     this.failureCount++;
     this.lastFailureTime = Date.now();
     if (this.failureCount >= this.options.failureThreshold) {
-      this.state = 'open';
+      this.transition('open');
     }
   }
 }

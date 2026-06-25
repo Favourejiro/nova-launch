@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PrismaClient, StreamStatus } from '@prisma/client';
 import { StreamEventParser } from '../services/streamEventParser';
 import { streamEventFixtures } from './fixtures/streamEvents';
+import claimFixtures from './fixtures/streamClaimDifferential.json';
 
 const prisma = new PrismaClient();
 const parser = new StreamEventParser(prisma);
@@ -374,5 +375,173 @@ describe('StreamEventParser', () => {
       expect(stream?.status).toBe(StreamStatus.CLAIMED);
       expect(stream?.claimedAt).toEqual(claimed.timestamp);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Differential parity: StreamClaim — backend projection vs shared fixture
+//
+// Shared fixture: backend/src/__tests__/fixtures/streamClaimDifferential.json
+// Mirror in contracts: contracts/token-factory/src/stream_claim_differential_test.rs
+//
+// Known field-name differences between contract and backend:
+//   Contract `claimed_amount`  ↔  Backend has no running cumulative field;
+//     status transitions to CLAIMED on every claim event regardless of whether
+//     the full amount was taken.
+//   Contract has no `claimedAt` timestamp — the ledger timestamp at claim time
+//     is the closest equivalent; the backend stores it from the event payload.
+//   Contract `total_amount - claimed_amount` = remaining; backend does not
+//     store remaining separately — it can be derived from the stream `amount`
+//     field and the cumulative claimed amount in the contract.
+// ---------------------------------------------------------------------------
+
+describe('StreamClaim differential parity — shared fixture', () => {
+  beforeEach(async () => {
+    await prisma.stream.deleteMany();
+  });
+
+  afterEach(async () => {
+    await prisma.stream.deleteMany();
+  });
+
+  // Scenarios 1-8: regular claim events (partial and full claims)
+  const regularFixtures = claimFixtures.filter(
+    (f) => f.scenario !== 'cancelled_stream_claim_rejected' &&
+           f.scenario !== 'second_partial_claim_incremental'
+  );
+
+  for (const fixture of regularFixtures) {
+    it(`scenario ${fixture.scenarioId} (${fixture.scenario}): claimedAt, status, and streamId match fixture`, async () => {
+      // First create the stream so the claimed event has a parent record.
+      await parser.parseCreatedEvent({
+        type: 'created',
+        streamId: fixture.streamId,
+        creator: 'GCREATOR_DIFFERENTIAL',
+        recipient: 'GRECIPIENT_DIFFERENTIAL',
+        amount: fixture.totalAmount,
+        hasMetadata: false,
+        txHash: `${fixture.txHash}-create`,
+        timestamp: new Date(fixture.startTime * 1000),
+      });
+
+      const claimedAt = new Date(fixture.claimedAtISO as string);
+
+      // Apply the claim event from the fixture.
+      await parser.parseClaimedEvent({
+        type: 'claimed',
+        streamId: fixture.streamId,
+        recipient: 'GRECIPIENT_DIFFERENTIAL',
+        amount: fixture.expectedClaimedAmount,
+        txHash: fixture.txHash,
+        timestamp: claimedAt,
+      });
+
+      const stream = await prisma.stream.findUnique({
+        where: { streamId: fixture.streamId },
+      });
+
+      expect(stream).toBeDefined();
+
+      // Field-by-field parity assertions.
+      expect(stream!.streamId).toBe(fixture.streamId);
+
+      // claimedAt must equal the event timestamp from the fixture.
+      expect(stream!.claimedAt).toEqual(claimedAt);
+
+      // status must be CLAIMED after any successful claim event.
+      expect(stream!.status).toBe(StreamStatus.CLAIMED);
+
+      // amount (total stream amount) must be preserved unchanged.
+      expect(stream!.amount).toEqual(BigInt(fixture.totalAmount));
+
+      // Round-trip: BigInt(fixture.expectedClaimedAmount) must be lossless.
+      const fixtureClaimedBigInt = BigInt(fixture.expectedClaimedAmount);
+      expect(typeof fixture.expectedClaimedAmount).toBe('string');
+      expect(fixtureClaimedBigInt.toString()).toBe(fixture.expectedClaimedAmount);
+    });
+  }
+
+  it('scenario 9 (cancelled_stream_claim_rejected): cancelled stream retains CANCELLED status, no claimedAt', async () => {
+    const fixture = claimFixtures.find((f) => f.scenarioId === 9)!;
+
+    await parser.parseCreatedEvent({
+      type: 'created',
+      streamId: fixture.streamId,
+      creator: 'GCREATOR_DIFFERENTIAL',
+      recipient: 'GRECIPIENT_DIFFERENTIAL',
+      amount: fixture.totalAmount,
+      hasMetadata: false,
+      txHash: `${fixture.txHash}-create`,
+      timestamp: new Date(fixture.startTime * 1000),
+    });
+
+    // Cancel the stream before any claim.
+    await parser.parseCancelledEvent({
+      type: 'cancelled',
+      streamId: fixture.streamId,
+      creator: 'GCREATOR_DIFFERENTIAL',
+      refundAmount: fixture.totalAmount,
+      txHash: `${fixture.txHash}-cancel`,
+      timestamp: new Date(fixture.claimAtLedgerTimestamp * 1000),
+    });
+
+    const stream = await prisma.stream.findUnique({
+      where: { streamId: fixture.streamId },
+    });
+
+    expect(stream).toBeDefined();
+    expect(stream!.status).toBe(StreamStatus.CANCELLED);
+    // No claim event was processed — claimedAt remains null.
+    expect(stream!.claimedAt).toBeNull();
+    // Stream amount is unchanged.
+    expect(stream!.amount).toEqual(BigInt(fixture.totalAmount));
+  });
+
+  it('scenario 10 (second_partial_claim_incremental): second claim event updates claimedAt and status correctly', async () => {
+    const fixture = claimFixtures.find((f) => f.scenarioId === 10)!;
+
+    await parser.parseCreatedEvent({
+      type: 'created',
+      streamId: fixture.streamId,
+      creator: 'GCREATOR_DIFFERENTIAL',
+      recipient: 'GRECIPIENT_DIFFERENTIAL',
+      amount: fixture.totalAmount,
+      hasMetadata: false,
+      txHash: `${fixture.txHash}-create`,
+      timestamp: new Date(fixture.startTime * 1000),
+    });
+
+    // First partial claim.
+    const firstClaimedAt = new Date((fixture as any).firstClaimLedgerTimestamp * 1000);
+    await parser.parseClaimedEvent({
+      type: 'claimed',
+      streamId: fixture.streamId,
+      recipient: 'GRECIPIENT_DIFFERENTIAL',
+      amount: (fixture as any).firstClaimedAmount,
+      txHash: `${fixture.txHash}-first`,
+      timestamp: firstClaimedAt,
+    });
+
+    // Second partial claim (fixture claimAtLedgerTimestamp).
+    const secondClaimedAt = new Date(fixture.claimedAtISO as string);
+    await parser.parseClaimedEvent({
+      type: 'claimed',
+      streamId: fixture.streamId,
+      recipient: 'GRECIPIENT_DIFFERENTIAL',
+      amount: fixture.expectedClaimedAmount,
+      txHash: fixture.txHash,
+      timestamp: secondClaimedAt,
+    });
+
+    const stream = await prisma.stream.findUnique({
+      where: { streamId: fixture.streamId },
+    });
+
+    expect(stream).toBeDefined();
+    // claimedAt reflects the most-recent claim event (second claim).
+    expect(stream!.claimedAt).toEqual(secondClaimedAt);
+    expect(stream!.status).toBe(StreamStatus.CLAIMED);
+    // Stream total amount is preserved across multiple claim events.
+    expect(stream!.amount).toEqual(BigInt(fixture.totalAmount));
   });
 });
