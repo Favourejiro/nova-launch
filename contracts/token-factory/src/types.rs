@@ -786,22 +786,9 @@ pub enum DataKey {
     MetadataContentHash(u32),
     /// Pending vault-owner change: vault_id → (new_owner, approvals_bitmap)
     PendingVaultOwnerChange(u64),
-    // Pull-model dividend distribution (#1148)
-    /// Distribution record keyed by distribution_id
-    Distribution(u32),
-    /// Total number of distributions initiated
-    DistributionCount,
-    /// Whether a holder has claimed for a distribution: (distribution_id, holder)
-    DistributionClaimed(u32, Address),
-    /// Running total of amounts claimed for a distribution
-    DistributionClaimedTotal(u32),
-    /// Recurring stream storage
-    RecurringStream(u64),
-    RecurringStreamCount,
-    NextRecurringStreamId,
-    /// Recurring streams by creator: (creator_address, index)
-    RecurringStreamByCreator(Address, u32),
-    CreatorRecurringStreamCount(Address),
+    /// FIFO execution queue of proposal ids for a given action type (#1366).
+    /// Stores an ordered `Vec<u64>`; index 0 is the front (next to execute).
+    ProposalTypeQueue(ActionType),
 }
 
 /// A point-in-time record of a token holder's balance.
@@ -1097,15 +1084,9 @@ impl Error {
     pub const VaultOwnerChangePending: Self = Self(97);
     pub const VaultOwnerChangeNotFound: Self = Self(98);
     pub const VaultOwnerChangeAlreadyApproved: Self = Self(99);
-    // Pull-model dividend distribution errors (#1148)
-    pub const DistributionNotFound: Self = Self(100);
-    pub const DistributionWindowClosed: Self = Self(101);
-    pub const DistributionWindowOpen: Self = Self(102);
-    pub const DistributionAlreadyClaimed: Self = Self(103);
-    pub const DistributionAlreadyReclaimed: Self = Self(104);
-    pub const DistributionZeroSupply: Self = Self(105);
-    // Per-epoch vault withdrawal circuit breaker (#1362)
-    pub const VaultCircuitBreakerActive: Self = Self(106);
+    /// Attempted to execute a proposal that is not at the front of its
+    /// per-type FIFO execution queue (#1366).
+    pub const ProposalNotAtQueueFront: Self = Self(100);
 }
 
 impl From<Error> for soroban_sdk::Error {

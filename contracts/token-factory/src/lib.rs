@@ -40,6 +40,9 @@ mod pagination;
 mod payload_validation;
 #[cfg(feature = "legacy-tests")]
 mod proposal_queue;
+mod proposal_type_queue;
+#[cfg(test)]
+mod proposal_execution_queue_fifo_test;
 mod proposal_state_machine;
 mod storage;
 mod storage_migration;
@@ -3847,6 +3850,26 @@ impl TokenFactory {
 
     pub fn execute_proposal(env: Env, proposal_id: u64) -> Result<(), Error> {
         timelock::execute_proposal(&env, proposal_id)
+    }
+
+    /// Append a queued proposal to the FIFO execution queue for its action type
+    /// (#1366). Proposals of the same type then execute strictly in the order
+    /// they were enqueued. Returns the proposal's position in its type queue
+    /// (0 = front / next to execute).
+    pub fn enqueue_typed_proposal(env: Env, proposal_id: u64) -> Result<u32, Error> {
+        proposal_type_queue::enqueue(&env, proposal_id)
+    }
+
+    /// Return the ordered list of proposal ids queued for `action_type`.
+    /// Index 0 is the front of the queue (next eligible to execute).
+    pub fn get_type_queue(env: Env, action_type: types::ActionType) -> soroban_sdk::Vec<u64> {
+        proposal_type_queue::queue_for(&env, action_type)
+    }
+
+    /// Return the 0-based position of a proposal within its action-type FIFO
+    /// queue, or `None` if it is not currently enqueued.
+    pub fn get_proposal_queue_position(env: Env, proposal_id: u64) -> Option<u32> {
+        proposal_type_queue::position(&env, proposal_id)
     }
 
     pub fn get_proposal(env: Env, proposal_id: u64) -> Option<types::Proposal> {

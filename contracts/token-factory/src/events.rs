@@ -934,8 +934,40 @@ pub fn emit_queue_entry_removed(
     );
 }
 
+/// Emit a per-type FIFO queue entry-added event (#1366).
+///
+/// Published when a proposal is appended to its action-type FIFO execution
+/// queue. Topics: ("tq_add", proposal_id). Payload: (action_type, position).
+pub fn emit_type_queue_entry_added(
+    env: &Env,
+    proposal_id: u64,
+    action_type: crate::types::ActionType,
+    position: u32,
+) {
+    env.events().publish(
+        (symbol_short!("tq_add"), proposal_id),
+        (action_type, position),
+    );
+}
+
+/// Emit a per-type FIFO queue entry-removed event (#1366).
+///
+/// Published when a proposal is removed from its action-type FIFO queue,
+/// either because it executed or was cancelled.
+/// Topics: ("tq_rem", proposal_id). Payload: (action_type,).
+pub fn emit_type_queue_entry_removed(
+    env: &Env,
+    proposal_id: u64,
+    action_type: crate::types::ActionType,
+) {
+    env.events().publish(
+        (symbol_short!("tq_rem"), proposal_id),
+        (action_type,),
+    );
+}
+
 /// Emit enriched error detail event
-/// 
+///
 /// **Event Name**: err_det
 /// 
 /// **Topics** (indexed):

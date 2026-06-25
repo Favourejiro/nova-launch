@@ -300,6 +300,25 @@ export const resolvers = {
       return bigintToString(rows);
     },
 
+    /**
+     * Current FIFO execution queue: queued proposals ordered by queue time.
+     *
+     * Proposals of the same `proposalType` execute in the order they were
+     * queued (FIFO); different types are independent. The returned list is
+     * ordered by `createdAt` ascending so the array index is the execution
+     * position within each type. Optionally narrowed to one `proposalType`.
+     */
+    async governanceQueue(_: unknown, args: { proposalType?: string }) {
+      const where: Record<string, unknown> = { status: "QUEUED" };
+      if (args.proposalType) where.proposalType = args.proposalType;
+
+      const rows = await prisma.proposal.findMany({
+        where,
+        orderBy: { createdAt: "asc" },
+      });
+      return bigintToString(rows);
+    },
+
     // ── Campaign ─────────────────────────────────────────────────────────────
 
     /** Fetch a single campaign by its on-chain campaignId. */
@@ -451,6 +470,28 @@ export const resolvers = {
         ...paginate(args),
       });
       return bigintToString(rows);
+    },
+
+    /**
+     * 0-based position of this proposal in the FIFO execution queue for its
+     * type. Computed as the number of QUEUED proposals of the same
+     * `proposalType` queued before it. Returns null unless the proposal is
+     * itself QUEUED.
+     */
+    async queuePosition(parent: {
+      status: string;
+      proposalType: string;
+      createdAt: Date | string;
+    }) {
+      if (parent.status !== "QUEUED") return null;
+      const ahead = await prisma.proposal.count({
+        where: {
+          status: "QUEUED",
+          proposalType: parent.proposalType as any,
+          createdAt: { lt: new Date(parent.createdAt) },
+        },
+      });
+      return ahead;
     },
   },
 };

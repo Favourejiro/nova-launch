@@ -666,6 +666,10 @@ pub fn cancel_proposal(env: &Env, caller: &Address, proposal_id: u64) -> Result<
     proposal.cancelled_at = Some(env.ledger().timestamp());
     storage::set_proposal(env, proposal_id, &proposal);
 
+    // Drop the proposal from its per-type FIFO queue so it no longer blocks
+    // later same-type proposals (#1366). No-op if it was never enqueued.
+    crate::proposal_type_queue::remove(env, proposal_id);
+
     events::emit_proposal_cancelled(env, proposal_id, caller);
 
     Ok(())
@@ -1367,14 +1371,11 @@ pub fn execute_proposal(env: &Env, proposal_id: u64) -> Result<(), Error> {
         return Err(Error::TimelockNotExpired);
     }
 
-    // Enforce the per-type delay (in ledgers) that was captured at queue time.
-    if proposal.timelock_delay > 0 && proposal.queued_at_ledger > 0 {
-        let current_ledger = env.ledger().sequence();
-        let elapsed = current_ledger.saturating_sub(proposal.queued_at_ledger);
-        if (elapsed as u64) < proposal.timelock_delay {
-            return Err(Error::TimelockNotExpired);
-        }
-    }
+    // FIFO ordering (#1366): if this proposal was placed in its action-type
+    // execution queue, only the front-of-queue entry may execute. Proposals of
+    // the same type therefore execute in the order they were queued; proposals
+    // of different types are in independent queues and are unaffected.
+    crate::proposal_type_queue::enforce_front(env, proposal_id)?;
 
     // Emit event signalling the proposal is now executable (timelock elapsed)
     events::emit_proposal_executable(env, proposal_id, proposal.eta);
@@ -1423,6 +1424,11 @@ pub fn execute_proposal(env: &Env, proposal_id: u64) -> Result<(), Error> {
     proposal.state = crate::types::ProposalState::Executed;
     proposal.executed_at = Some(current_time);
     storage::set_proposal(env, proposal_id, &proposal);
+
+    // Advance the per-type FIFO queue: remove the just-executed front entry so
+    // the next proposal of this type becomes executable (#1366). No-op for
+    // proposals that were never enqueued.
+    crate::proposal_type_queue::remove(env, proposal_id);
 
     events::emit_proposal_executed(env, proposal_id, &proposal.proposer, true);
 

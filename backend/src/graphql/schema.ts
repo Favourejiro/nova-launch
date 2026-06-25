@@ -109,6 +109,11 @@ export const typeDefs = /* GraphQL */ `
     updatedAt: DateTime!
     executedAt: DateTime
     votes(limit: Int, offset: Int): [Vote!]!
+    """
+    0-based position of this proposal in the FIFO execution queue for its
+    proposalType. Only meaningful while status is QUEUED; null otherwise.
+    """
+    queuePosition: Int
   }
 
   type Vote {
@@ -183,6 +188,10 @@ export const typeDefs = /* GraphQL */ `
       limit: Int
       offset: Int
     ): [Proposal!]!
+
+    # Current FIFO execution queue (status = QUEUED), ordered by queue time.
+    # Optionally narrowed to a single proposalType.
+    governanceQueue(proposalType: ProposalType): [Proposal!]!
 
     # Campaign queries
     campaign(campaignId: Int!): Campaign
