@@ -36,6 +36,20 @@ export interface WebhookDeliveryLog {
   createdAt: string;
 }
 
+export interface DeadLetterEntry {
+  id: string;
+  subscriptionId: string;
+  event: WebhookEventType;
+  payload: string;
+  statusCode: number | null;
+  lastError: string | null;
+  attemptCount: number;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  resolution: string | null;
+}
+
 export interface CreateWebhookInput {
   url: string;
   tokenAddress?: string | null;
@@ -115,6 +129,28 @@ export const webhookApi = {
    */
   testWebhook: (id: string) =>
     request<{ success: boolean; message: string }>(`/${id}/test`, {
+      method: "POST",
+    }),
+
+  /**
+   * Get dead-letter entries for a subscription
+   */
+  getDeadLetters: (id: string, limit = 50) =>
+    request<DeadLetterEntry[]>(`/${id}/dead-letters?limit=${limit}`),
+
+  /**
+   * Retry a dead-letter delivery
+   */
+  retryDeadLetter: (id: string) =>
+    request<{ success: boolean; message: string }>(`/dead-letters/${id}/retry`, {
+      method: "POST",
+    }),
+
+  /**
+   * Skip/discard a dead-letter delivery
+   */
+  discardDeadLetter: (id: string) =>
+    request<{ success: boolean; message: string }>(`/dead-letters/${id}/skip`, {
       method: "POST",
     }),
 };
