@@ -177,7 +177,6 @@ use types::{
     StreamPage, StreamParams, TokenCreationParams, TokenInfo, TokenStats, Vault, VaultStatus,
 };
 use crate::milestone_verification::MilestoneVerifier;
-use crate::snapshot;
 
 #[contract]
 pub struct TokenFactory;
@@ -797,76 +796,72 @@ impl TokenFactory {
         storage::is_paused(&env)
     }
 
-    /// Update fee structure (admin only)
+    /// Propose a fee update through the governance flow (#1385)
     ///
-    /// Allows the admin to update either or both deployment fees.
-    /// At least one fee must be specified for the update.
+    /// Fees can no longer be updated directly by the admin. This is a thin
+    /// wrapper around the existing governance proposal state machine
+    /// (`create_proposal` with `ActionType::FeeChange`): the caller must be
+    /// the current admin, but the proposal still must pass quorum/approval
+    /// via `vote_proposal`, be moved into the timelock via `queue_proposal`,
+    /// and wait for `eta` before `execute_proposal` actually applies the new
+    /// fees. This guarantees token creators get advance notice of fee
+    /// changes instead of being surprised by a unilateral admin update.
     ///
     /// # Arguments
     /// * `env` - The contract environment
-    /// * `admin` - Admin address (must authorize and match stored admin)
-    /// * `base_fee` - Optional new base fee in stroops (None = no change)
-    /// * `metadata_fee` - Optional new metadata fee in stroops (None = no change)
+    /// * `proposer` - Admin address proposing the change (must authorize)
+    /// * `base_fee` - New base fee in stroops
+    /// * `metadata_fee` - New metadata fee in stroops
+    /// * `start_time` - Voting window start (must be >= now)
+    /// * `end_time` - Voting window end (must be > start_time)
+    /// * `eta` - Earliest execution time; `eta - end_time` must fall within
+    ///   the configured timelock bounds (`MIN_TIMELOCK_DELAY`..=`MAX_TIMELOCK_DELAY`)
     ///
     /// # Returns
-    /// Returns `Ok(())` on success
+    /// Returns the new proposal ID.
     ///
     /// # Errors
     /// * `Error::Unauthorized` - Caller is not the admin
-    /// * `Error::InvalidParameters` - Both fees are None or any fee is negative
+    /// * `Error::InvalidParameters` - Fees negative or timelock delay out of bounds
+    /// * `Error::InvalidTimeWindow` - Time windows are invalid
+    ///
+    /// # Events
+    /// Emits `proposal_created` (generic) and `fe_pr_v1`/`FeeUpdateProposed` (#1385)
     ///
     /// # Examples
     /// ```
-    /// // Update only base fee
-    /// factory.update_fees(&env, admin, Some(2_000_000), None)?;
-    ///
-    /// // Update both fees
-    /// factory.update_fees(&env, admin, Some(2_000_000), Some(1_000_000))?;
+    /// let proposal_id = factory.propose_fee_update(
+    ///     &env, admin, 2_000_000, 1_000_000, start_time, end_time, eta,
+    /// )?;
+    /// // ... governance vote happens via vote_proposal ...
+    /// factory.queue_proposal(&env, proposal_id)?;
+    /// // ... wait for timelock (eta) to elapse ...
+    /// factory.execute_proposal(&env, proposal_id)?;
     /// ```
-    pub fn update_fees(
+    pub fn propose_fee_update(
         env: Env,
-        admin: Address,
-        base_fee: Option<i128>,
-        metadata_fee: Option<i128>,
-    ) -> Result<(), Error> {
-        admin.require_auth();
-
-        // Early return on unauthorized (Phase 1 optimization)
-        let current_admin = storage::get_admin(&env);
-        if admin != current_admin {
-            return Err(Error::Unauthorized);
-        }
-
-        // Early return if no changes requested
-        if base_fee.is_none() && metadata_fee.is_none() {
+        proposer: Address,
+        base_fee: i128,
+        metadata_fee: i128,
+        start_time: u64,
+        end_time: u64,
+        eta: u64,
+    ) -> Result<u64, Error> {
+        if base_fee < 0 || metadata_fee < 0 {
             return Err(Error::InvalidParameters);
         }
 
-        // Validate fees before updating (Phase 1 optimization)
-        if let Some(fee) = base_fee {
-            if fee < 0 {
-                return Err(Error::InvalidParameters);
-            }
-            storage::set_base_fee(&env, fee);
-        }
+        let payload = payload_validation::encode_fee_payload(&env, base_fee, metadata_fee);
 
-        if let Some(fee) = metadata_fee {
-            if fee < 0 {
-                return Err(Error::InvalidParameters);
-            }
-            storage::set_metadata_fee(&env, fee);
-        }
-
-        // Validate fees after update
-        validation::validate_fees(&env)?;
-
-        // Get updated fees for event
-        let new_base_fee = base_fee.unwrap_or_else(|| storage::get_base_fee(&env));
-        let new_metadata_fee = metadata_fee.unwrap_or_else(|| storage::get_metadata_fee(&env));
-
-        // Emit structured event with acting admin (closes #1127)
-        events::emit_fees_updated_v2(&env, &admin, new_base_fee, new_metadata_fee);
-        Ok(())
+        timelock::create_proposal(
+            &env,
+            &proposer,
+            types::ActionType::FeeChange,
+            payload,
+            start_time,
+            end_time,
+            eta,
+        )
     }
 
     /// Get token info by index
@@ -880,45 +875,29 @@ impl TokenFactory {
     ///
     /// Updates multiple admin parameters in a single transaction,
     /// reducing gas costs by combining verification and storage operations.
-    /// Provides 40-50% gas savings compared to separate function calls.
+    ///
+    /// # Note (#1385)
+    /// Fee updates were removed from this batch entry point. Fees can only
+    /// be changed through the governance flow (`propose_fee_update` ->
+    /// `vote_proposal` -> `queue_proposal` -> `execute_proposal`), so direct
+    /// admin fee mutation — batched or not — is no longer supported here.
     ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `admin` - Admin address (must authorize and match stored admin)
-    /// * `base_fee` - Optional new base fee in stroops (None = no change)
-    /// * `metadata_fee` - Optional new metadata fee in stroops (None = no change)
-    /// * `paused` - Optional new pause state (None = no change)
+    /// * `paused` - New pause state
     ///
     /// # Returns
     /// Returns `Ok(())` on success
     ///
     /// # Errors
     /// * `Error::Unauthorized` - Caller is not the admin
-    /// * `Error::InvalidParameters` - All parameters are None or any fee is negative
-    ///
-    /// # Gas Savings
-    /// - Batch both fee updates: -2,000 to 3,000 CPU instructions
-    /// - Combined with pause: -1,000 additional CPU instructions
-    /// - Total savings vs separate calls: 40-50% for combined operations
     ///
     /// # Examples
     /// ```
-    /// // Update fees and pause in one transaction
-    /// factory.batch_update_admin(
-    ///     &env,
-    ///     admin,
-    ///     Some(2_000_000),
-    ///     Some(1_000_000),
-    ///     Some(true),
-    /// )?;
+    /// factory.batch_update_admin(&env, admin, true)?;
     /// ```
-    pub fn batch_update_admin(
-        env: Env,
-        admin: Address,
-        base_fee: Option<i128>,
-        metadata_fee: Option<i128>,
-        paused: Option<bool>,
-    ) -> Result<(), Error> {
+    pub fn batch_update_admin(env: Env, admin: Address, paused: bool) -> Result<(), Error> {
         admin.require_auth();
 
         // Single admin verification (Phase 2 optimization)
@@ -927,39 +906,13 @@ impl TokenFactory {
             return Err(Error::Unauthorized);
         }
 
-        // Early return if no changes
-        if base_fee.is_none() && metadata_fee.is_none() && paused.is_none() {
-            return Err(Error::InvalidParameters);
+        storage::set_paused(&env, paused);
+
+        if paused {
+            events::emit_pause(&env, &admin);
+        } else {
+            events::emit_unpause(&env, &admin);
         }
-
-        // Validate all inputs before any storage writes (Phase 2 optimization)
-        if let Some(fee) = base_fee {
-            if fee < 0 {
-                return Err(Error::InvalidParameters);
-            }
-            storage::set_base_fee(&env, fee);
-        }
-
-        if let Some(fee) = metadata_fee {
-            if fee < 0 {
-                return Err(Error::InvalidParameters);
-            }
-            storage::set_metadata_fee(&env, fee);
-        }
-
-        if let Some(pause_state) = paused {
-            storage::set_paused(&env, pause_state);
-        }
-
-        // Validate fees after update
-        validation::validate_fees(&env)?;
-
-        // Get final state for event
-        let final_base_fee = storage::get_base_fee(&env);
-        let final_metadata_fee = storage::get_metadata_fee(&env);
-
-        // Emit single consolidated event (Phase 2 optimization)
-        events::emit_fees_updated_v2(&env, &admin, final_base_fee, final_metadata_fee);
 
         Ok(())
     }
@@ -2035,7 +1988,7 @@ impl TokenFactory {
     /// * `Error::Unauthorized` - Caller is not the token creator
     ///
     /// # Events
-    /// Emits `role_gr_v1` with token_index, creator, grantee, and role
+    /// Emits `role_grv1` with token_index, creator, grantee, and role
     pub fn grant_role(
         env: Env,
         creator: Address,
@@ -2077,7 +2030,7 @@ impl TokenFactory {
     /// * `Error::Unauthorized` - Caller is not the token creator
     ///
     /// # Events
-    /// Emits `role_rv_v1` with token_index, creator, revokee, and role
+    /// Emits `role_rvv1` with token_index, creator, revokee, and role
     pub fn revoke_role(
         env: Env,
         creator: Address,
@@ -4351,8 +4304,7 @@ mod fuzz_burn_auction;
 // mod admin_transfer_test;
 
 #[cfg(test)]
-// #[cfg(test)]
-// mod fee_collection_test;
+mod fee_collection_test;
 
 // Temporarily disabled - has compilation errors
 // mod event_tests;

@@ -621,6 +621,14 @@ pub fn create_proposal(
         eta,
     );
 
+    // Fee-update proposals get a dedicated, strongly-typed event in addition
+    // to the generic proposal event so indexers can track fee governance
+    // without decoding the raw payload bytes (#1385).
+    if action_type == ActionType::FeeChange {
+        let (base_fee, metadata_fee) = payload_validation::parse_fee_payload(&proposal.payload);
+        events::emit_fee_update_proposed(env, proposal_id, proposer, base_fee, metadata_fee, eta);
+    }
+
     Ok(proposal_id)
 }
 
@@ -1343,6 +1351,12 @@ pub fn queue_proposal(env: &Env, proposal_id: u64) -> Result<(), Error> {
     // Emit event
     events::emit_proposal_queued(env, proposal_id, proposal.eta);
 
+    // Dedicated fee-update event (#1385): signals the pending fee change is
+    // now timelocked and cannot execute before `eta`.
+    if proposal.action_type == ActionType::FeeChange {
+        events::emit_fee_update_queued(env, proposal_id, proposal.eta);
+    }
+
     Ok(())
 }
 
@@ -1386,6 +1400,9 @@ pub fn execute_proposal(env: &Env, proposal_id: u64) -> Result<(), Error> {
             storage::set_base_fee(env, base_fee);
             storage::set_metadata_fee(env, metadata_fee);
             events::emit_fees_updated_v2(env, &proposal.proposer, base_fee, metadata_fee);
+            // Dedicated fee-update event (#1385): the pending fee change has
+            // now been applied to contract storage after timelock expiry.
+            events::emit_fee_update_executed(env, proposal_id, &proposal.proposer, base_fee, metadata_fee);
         }
         ActionType::TreasuryChange => {
             let new_treasury = payload_validation::parse_treasury_payload(env, &proposal.payload);
@@ -1686,84 +1703,6 @@ mod cancel_proposal_tests {
         let (env, admin, contract_id) = setup();
         let pid = make_proposal(&env, &contract_id, &admin);
 
-        env.as_contract(&contract_id, || {
-            cancel_proposal(&env, &admin, pid).unwrap();
-            let err = cancel_proposal(&env, &admin, pid).unwrap_err();
-            assert_eq!(err, Error::ProposalNotCancellable);
-        });
-    }
-}
-
-#[cfg(test)]
-mod cancel_proposal_tests {
-    use super::*;
-    use crate::test_helpers::fee_change_payload;
-    use soroban_sdk::{testutils::Address as _, testutils::Ledger, Env};
-
-    fn setup() -> (Env, Address, Address) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, crate::TokenFactory);
-        let admin = Address::generate(&env);
-        env.as_contract(&contract_id, || {
-            storage::set_admin(&env, &admin);
-            storage::set_treasury(&env, &Address::generate(&env));
-            storage::set_base_fee(&env, 1_000_000);
-            storage::set_metadata_fee(&env, 500_000);
-            initialize_timelock(&env, Some(3600)).unwrap();
-        });
-        (env, admin, contract_id)
-    }
-
-    fn make_proposal(env: &Env, contract_id: &Address, proposer: &Address) -> u64 {
-        let t = env.ledger().timestamp();
-        let payload = fee_change_payload(env, 2_000_000, 750_000);
-        env.as_contract(contract_id, || {
-            create_proposal(env, proposer, ActionType::FeeChange, payload, t + 10, t + 86410, t + 90010).unwrap()
-        })
-    }
-
-    #[test]
-    fn proposer_can_cancel() {
-        let (env, admin, contract_id) = setup();
-        let pid = make_proposal(&env, &contract_id, &admin);
-        env.as_contract(&contract_id, || {
-            cancel_proposal(&env, &admin, pid).unwrap();
-            let p = storage::get_proposal(&env, pid).unwrap();
-            assert_eq!(p.state, crate::types::ProposalState::Cancelled);
-            assert!(p.cancelled_at.is_some());
-        });
-    }
-
-    #[test]
-    fn non_proposer_non_admin_cannot_cancel() {
-        let (env, admin, contract_id) = setup();
-        let pid = make_proposal(&env, &contract_id, &admin);
-        let stranger = Address::generate(&env);
-        env.as_contract(&contract_id, || {
-            let err = cancel_proposal(&env, &stranger, pid).unwrap_err();
-            assert_eq!(err, Error::Unauthorized);
-        });
-    }
-
-    #[test]
-    fn cannot_cancel_terminal_proposal() {
-        let (env, admin, contract_id) = setup();
-        let pid = make_proposal(&env, &contract_id, &admin);
-        env.as_contract(&contract_id, || {
-            let mut p = storage::get_proposal(&env, pid).unwrap();
-            p.state = crate::types::ProposalState::Executed;
-            p.executed_at = Some(env.ledger().timestamp());
-            storage::set_proposal(&env, pid, &p);
-            let err = cancel_proposal(&env, &admin, pid).unwrap_err();
-            assert_eq!(err, Error::ProposalNotCancellable);
-        });
-    }
-
-    #[test]
-    fn cannot_cancel_already_cancelled() {
-        let (env, admin, contract_id) = setup();
-        let pid = make_proposal(&env, &contract_id, &admin);
         env.as_contract(&contract_id, || {
             cancel_proposal(&env, &admin, pid).unwrap();
             let err = cancel_proposal(&env, &admin, pid).unwrap_err();
