@@ -720,6 +720,8 @@ pub enum DataKey {
     TokenStreams(u32),
     TokenStreamCount(u32),
     NextStreamId,
+    // Keyset pagination index: ordered (created_ledger, stream_id) entries per owner
+    CreatorStreamIndex(Address),
     GovernanceConfig,
     Vault(u64),
     VaultCount,
@@ -1316,6 +1318,46 @@ pub struct PaginatedTokens {
     pub tokens: soroban_sdk::Vec<TokenInfo>,
     pub has_more: bool,
     pub cursor: PaginationCursor,
+}
+
+/// Keyset cursor for stream pagination.
+///
+/// Identifies a position in the `(created_ledger, stream_id)` ascending
+/// ordering of an owner's streams. Unlike offset-based pagination, this
+/// cursor is stable across concurrent inserts: a stream created after the
+/// cursor was issued can never be skipped or duplicated by a subsequent
+/// page fetch, because the scan always resumes strictly after the last
+/// `(created_ledger, stream_id)` pair returned.
+///
+/// # Fields
+/// * `created_ledger` - Ledger sequence number when the stream was created
+/// * `stream_id` - Unique stream identifier (tiebreaker for same-ledger creates)
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamCursor {
+    pub created_ledger: u32,
+    pub stream_id: u64,
+}
+
+impl StreamCursor {
+    /// True if `self` sorts strictly before `other` in `(created_ledger, stream_id)` order.
+    pub fn is_before(&self, other: &StreamCursor) -> bool {
+        (self.created_ledger, self.stream_id) < (other.created_ledger, other.stream_id)
+    }
+}
+
+/// Response for keyset-paginated stream listings.
+///
+/// # Fields
+/// * `streams` - Page of streams ordered by `(created_ledger, stream_id)` ascending
+/// * `next_cursor` - Cursor to pass to the next call (`None` when this is the last page)
+/// * `has_more` - Whether additional streams exist beyond this page
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaginatedStreamsResponse {
+    pub streams: soroban_sdk::Vec<StreamInfo>,
+    pub next_cursor: Option<StreamCursor>,
+    pub has_more: bool,
 }
 
 /// Paginated vault result

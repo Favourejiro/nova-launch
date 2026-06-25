@@ -57,6 +57,10 @@ pub fn create_stream(env: &Env, creator: &Address, params: &StreamParams) -> Res
     // Store stream
     storage::set_stream(env, stream_id, &stream);
 
+    // Maintain the keyset pagination index (created_ledger, stream_id) for the owner
+    let created_ledger = env.ledger().sequence();
+    storage::add_creator_stream_index(env, creator, created_ledger, stream_id);
+
     // Emit event
     events::emit_stream_created(
         env,

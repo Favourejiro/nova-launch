@@ -156,6 +156,9 @@ mod vault_error_test;
 #[cfg(test)]
 mod vault_circuit_breaker_test;
 
+#[cfg(test)]
+mod stream_keyset_pagination_test;
+
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, String, Symbol, Vec};
 use types::{
     AuctionStatus, BurnAuction, BuybackCampaign, CampaignStatus, ContractMetadata,
@@ -2292,6 +2295,32 @@ impl TokenFactory {
             token_indices,
             next_cursor,
         }
+    }
+
+    /// Return a keyset-paginated list of streams created by `owner`.
+    ///
+    /// Unlike `get_streams_by_beneficiary` (offset-based), this entry point
+    /// uses a `(created_ledger, stream_id)` cursor so that streams created
+    /// concurrently with paging never get skipped or duplicated across page
+    /// fetches. Intended for wallets with large stream collections where
+    /// offset pagination would otherwise drift.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `owner` - The stream creator to list streams for
+    /// * `cursor` - `None` for the first page; otherwise the `next_cursor`
+    ///   returned by the previous call
+    /// * `limit` - Maximum streams to return, clamped to a maximum of 50
+    ///
+    /// # Returns
+    /// `PaginatedStreamsResponse { streams, next_cursor, has_more }`
+    pub fn list_streams_paginated(
+        env: Env,
+        owner: Address,
+        cursor: Option<types::StreamCursor>,
+        limit: u32,
+    ) -> types::PaginatedStreamsResponse {
+        pagination::list_streams_paginated(&env, &owner, cursor, limit)
     }
     // ═══════════════════════════════════════════════════════════════════════
     // Timelock Functions

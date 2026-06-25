@@ -1,6 +1,6 @@
 use soroban_sdk::{Address, Env};
 
-use crate::types::{BuybackCampaign, DataKey, Error, FactoryState, TokenInfo};
+use crate::types::{BuybackCampaign, DataKey, Error, FactoryState, StreamCursor, TokenInfo};
 
 // ============================================================
 // TTL Bump Constants (#1128)
@@ -1100,6 +1100,38 @@ pub fn get_next_stream_id(env: &Env) -> u64 {
         .instance()
         .set(&DataKey::NextStreamId, &(id + 1));
     id
+}
+
+// ── Keyset pagination index (per-owner streams) ─────────────────
+
+/// Append a `(created_ledger, stream_id)` entry to the owner's keyset index.
+///
+/// Streams are appended in creation order, and since `created_ledger` is
+/// non-decreasing over time and `stream_id` is monotonically increasing,
+/// the resulting vector is always sorted ascending by `(created_ledger,
+/// stream_id)` without needing an explicit sort on read.
+pub fn add_creator_stream_index(env: &Env, owner: &Address, created_ledger: u32, stream_id: u64) {
+    let key = DataKey::CreatorStreamIndex(owner.clone());
+    let mut index: soroban_sdk::Vec<StreamCursor> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(soroban_sdk::Vec::new(env));
+
+    index.push_back(StreamCursor {
+        created_ledger,
+        stream_id,
+    });
+
+    env.storage().persistent().set(&key, &index);
+}
+
+/// Get the full keyset index (ascending `(created_ledger, stream_id)`) for an owner.
+pub fn get_creator_stream_index(env: &Env, owner: &Address) -> soroban_sdk::Vec<StreamCursor> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CreatorStreamIndex(owner.clone()))
+        .unwrap_or(soroban_sdk::Vec::new(env))
 }
 
 // ── Vault storage functions ───────────────────────────────
